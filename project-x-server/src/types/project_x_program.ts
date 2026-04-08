@@ -1,7 +1,13 @@
-{
+/**
+ * Program IDL in camelCase format in order to be used in JS/TS.
+ *
+ * Note that this is only a type helper and is not the actual IDL. The original
+ * IDL can be found at `target/idl/project_x_program.json`.
+ */
+export type ProjectXProgram = {
   "address": "8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy",
   "metadata": {
-    "name": "project_x_program",
+    "name": "projectXProgram",
     "version": "0.1.0",
     "spec": "0.1.0",
     "description": "Created with Anchor"
@@ -106,13 +112,13 @@
           "signer": true
         },
         {
-          "name": "system_program",
+          "name": "systemProgram",
           "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
         {
-          "name": "credential_hash",
+          "name": "credentialHash",
           "type": {
             "array": [
               "u8",
@@ -221,7 +227,7 @@
       ],
       "args": [
         {
-          "name": "proximity_verified",
+          "name": "proximityVerified",
           "type": "bool"
         }
       ]
@@ -229,7 +235,7 @@
   ],
   "accounts": [
     {
-      "name": "Credential",
+      "name": "credential",
       "discriminator": [
         145,
         44,
@@ -245,28 +251,28 @@
   "errors": [
     {
       "code": 6000,
-      "name": "CredentialInactive",
+      "name": "credentialInactive",
       "msg": "Credential is inactive"
     },
     {
       "code": 6001,
-      "name": "ProximityCheckFailed",
+      "name": "proximityCheckFailed",
       "msg": "Proximity check failed — parties must be within 50m"
     },
     {
       "code": 6002,
-      "name": "OwnerMismatch",
+      "name": "ownerMismatch",
       "msg": "Owner does not match credential"
     },
     {
       "code": 6003,
-      "name": "UnauthorizedPlatform",
+      "name": "unauthorizedPlatform",
       "msg": "Only the enrolling platform can revoke this credential"
     }
   ],
   "types": [
     {
-      "name": "Credential",
+      "name": "credential",
       "type": {
         "kind": "struct",
         "fields": [
@@ -279,7 +285,7 @@
             "type": "pubkey"
           },
           {
-            "name": "credential_hash",
+            "name": "credentialHash",
             "type": {
               "array": [
                 "u8",
@@ -288,11 +294,11 @@
             }
           },
           {
-            "name": "enrolled_at",
+            "name": "enrolledAt",
             "type": "i64"
           },
           {
-            "name": "is_active",
+            "name": "isActive",
             "type": "bool"
           },
           {
@@ -305,9 +311,9 @@
   ],
   "constants": [
     {
-      "name": "SEED",
+      "name": "seed",
       "type": "string",
       "value": "\"anchor\""
     }
   ]
-}
+};

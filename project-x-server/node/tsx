@@ -1,0 +1,2 @@
+import { platformKeypair } from "./src/config/solana";
+console.log(platformKeypair.publicKey.toBase58());

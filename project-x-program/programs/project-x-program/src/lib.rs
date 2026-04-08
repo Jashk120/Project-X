@@ -51,7 +51,20 @@ pub struct Revoke<'info> {
     #[account(constraint = platform.key() == credential.platform @ ProjectXError::UnauthorizedPlatform)]
     pub platform: Signer<'info>,
 }
-
+#[derive(Accounts)]
+pub struct Close<'info> {
+    #[account(
+        mut,
+        seeds = [b"credential", owner.key().as_ref()],
+        bump = credential.bump,
+        close = platform  // lamports go back to platform
+    )]
+    pub credential: Account<'info, Credential>,
+    /// CHECK: checking pubkey only
+    pub owner: UncheckedAccount<'info>,
+    #[account(constraint = platform.key() == credential.platform @ ProjectXError::UnauthorizedPlatform)]
+    pub platform: Signer<'info>,
+}
 #[program]
 pub mod project_x_program {
     use super::*;
@@ -81,5 +94,8 @@ pub mod project_x_program {
         credential.is_active = false;
         msg!("🚫 Credential revoked for {}", credential.owner);
         Ok(())
+    }
+    pub fn close(_ctx: Context<Close>) -> Result<()> {
+    Ok(())
     }
 }

@@ -1,0 +1,71 @@
+# -----------------------------
+# General
+# -----------------------------
+node_modules/
+.env
+.env.*
+*.log
+*.tsbuildinfo
+.DS_Store
+coverage/
+dist/
+build/
+.tmp/
+.cache/
+
+# -----------------------------
+# Next.js (project-x)
+# -----------------------------
+project-x/.next/
+project-x/out/
+project-x/node_modules/
+project-x/.env*
+project-x/.vercel
+project-x/.turbo
+
+# -----------------------------
+# Fastify Server (project-x-server)
+# -----------------------------
+project-x-server/node_modules/
+project-x-server/dist/
+project-x-server/.env*
+project-x-server/*.log
+
+# -----------------------------
+# Anchor Program (project-x-program)
+# -----------------------------
+project-x-program/target/
+project-x-program/node_modules/
+project-x-program/.anchor/
+project-x-program/.env
+project-x-program/dist/
+project-x-program/tests/fixtures/
+
+# Rust / Cargo (Anchor uses Rust)
+project-x-program/Cargo.lock
+# (optional: keep if building reproducible binaries)
+# !project-x-program/Cargo.lock
+
+# -----------------------------
+# Solana / Anchor artifacts
+# -----------------------------
+*.json
+*.so
+*.keypair
+
+# if you generate local wallets
+**/id.json
+**/*.keypair.json
+
+# -----------------------------
+# Editor / IDE
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -----------------------------
+# OS
+# -----------------------------
+Thumbs.db

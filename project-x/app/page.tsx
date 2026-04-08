@@ -57,84 +57,79 @@ export default function Home() {
     }
   }
 
-  const enroll = async () => {
-    if (!publicKey) return
-    try {
-      setStatus({ type: 'loading', message: 'Enrolling identity...' })
-      const program = getProgram()
-      const [credentialPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from('credential'), publicKey.toBuffer()],
-        PROGRAM_ID
-      )
-      const credentialHash = Array(32).fill(1)
-      await program.methods
-        .enroll(credentialHash)
-        .accounts({
-          credential: credentialPda,
-          owner: publicKey,
-          platform: publicKey,
-          systemProgram: web3.SystemProgram.programId,
-        })
-        .rpc()
-      setStatus({
-        type: 'success',
-        message: '✅ Enrolled successfully!',
-        detail: 'PDA: ' + credentialPda.toString()
+const enroll = async () => {
+  if (!publicKey) return
+  try {
+    setStatus({ type: 'loading', message: 'Enrolling identity...' })
+    const res = await fetch('http://192.168.0.129:4575/api/v1/enroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Enroll failed')
+    setStatus({ type: 'success', message: '✅ Enrolled!', detail: 'PDA: ' + data.credentialPda })
+  } catch (e: any) {
+    setStatus({ type: 'error', message: '❌ ' + e.message })
+  }
+}
+
+const verify = async () => {
+  if (!publicKey) return
+  try {
+    setStatus({ type: 'loading', message: 'Verifying identity...' })
+    const res = await fetch('http://192.168.0.129:4575/api/v1/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Verify failed')
+    setStatus({ type: 'success', message: '✅ Identity verified!' })
+  } catch (e: any) {
+    setStatus({ type: 'error', message: '❌ ' + e.message })
+  }
+}
+
+const revoke = async () => {
+  if (!publicKey) return
+  try {
+    setStatus({ type: 'loading', message: 'Revoking credential...' })
+    const res = await fetch('http://192.168.0.129:4575/api/v1/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Revoke failed')
+    setStatus({ type: 'success', message: '🚫 Credential revoked!' })
+  } catch (e: any) {
+    setStatus({ type: 'error', message: '❌ ' + e.message })
+  }
+}
+const closePda = async () => {
+  if (!publicKey) return
+  try {
+    setStatus({ type: 'loading', message: 'Closing old PDA...' })
+    const program = getProgram()
+    const [credentialPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('credential'), publicKey.toBuffer()],
+      PROGRAM_ID
+    )
+    await (program.methods as any)
+      .close()
+      .accounts({
+        credential: credentialPda,
+        owner: publicKey,
+        platform: publicKey, // Phantom was the platform in old enrollment
       })
-    } catch (e: any) {
-      const { message, detail } = parseError(e)
-      setStatus({ type: 'error', message: '❌ Enroll failed: ' + message, detail })
-    }
+      .rpc()
+    setStatus({ type: 'success', message: '✅ PDA closed! Now enroll again.' })
+  } catch (e: any) {
+    const { message, detail } = parseError(e)
+    setStatus({ type: 'error', message: '❌ Close failed: ' + message, detail })
   }
-
-  const verify = async () => {
-    if (!publicKey) return
-    try {
-      setStatus({ type: 'loading', message: 'Verifying identity...' })
-      const program = getProgram()
-      const [credentialPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from('credential'), publicKey.toBuffer()],
-        PROGRAM_ID
-      )
-      await program.methods
-        .verify(true)
-        .accounts({
-          credential: credentialPda,
-          owner: publicKey,
-          verifier: publicKey,
-        })
-        .rpc()
-      setStatus({ type: 'success', message: '✅ Identity verified!' })
-    } catch (e: any) {
-      const { message, detail } = parseError(e)
-      setStatus({ type: 'error', message: '❌ Verify failed: ' + message, detail })
-    }
-  }
-
-  const revoke = async () => {
-    if (!publicKey) return
-    try {
-      setStatus({ type: 'loading', message: 'Revoking credential...' })
-      const program = getProgram()
-      const [credentialPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from('credential'), publicKey.toBuffer()],
-        PROGRAM_ID
-      )
-      await program.methods
-        .revoke()
-        .accounts({
-          credential: credentialPda,
-          owner: publicKey,
-          platform: publicKey,
-        })
-        .rpc()
-      setStatus({ type: 'success', message: '🚫 Credential revoked!' })
-    } catch (e: any) {
-      const { message, detail } = parseError(e)
-      setStatus({ type: 'error', message: '❌ Revoke failed: ' + message, detail })
-    }
-  }
-
+}
   const statusColors: Record<StatusType, string> = {
     idle: '#888',
     loading: '#f0a500',
@@ -165,6 +160,10 @@ export default function Home() {
             <button onClick={revoke} disabled={status.type === 'loading'}
               style={{ padding: '10px 20px', cursor: 'pointer', background: '#dc2626', color: 'white', border: 'none', borderRadius: 6 }}>
               Revoke
+            </button>
+            <button onClick={closePda} disabled={status.type === 'loading'}
+              style={{ padding: '10px 20px', cursor: 'pointer', background: '#854d0e', color: 'white', border: 'none', borderRadius: 6 }}>
+              Close PDA
             </button>
           </div>
 
