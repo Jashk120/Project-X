@@ -6,6 +6,7 @@ import { Program, AnchorProvider, web3 } from '@coral-xyz/anchor'
 import { PublicKey } from '@solana/web3.js'
 import idl from './idl/project_x_program.json'
 import { useState } from 'react'
+import { registerDriverWithWebAuthn } from './lib/webauthn'
 
 const PROGRAM_ID = new PublicKey('8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy')
 
@@ -21,7 +22,8 @@ export default function Home() {
   const { publicKey, signTransaction, signAllTransactions } = useWallet()
   const { connection } = useConnection()
   const [status, setStatus] = useState<Status>({ type: 'idle', message: '' })
-
+  const API_BASE_URL = process.env.NEXT_PUBLIC_PROJECT_X_API_URL
+  
   const getProgram = () => {
     const provider = new AnchorProvider(
       connection,
@@ -60,15 +62,13 @@ export default function Home() {
 const enroll = async () => {
   if (!publicKey) return
   try {
-    setStatus({ type: 'loading', message: 'Enrolling identity...' })
-    const res = await fetch('http://192.168.0.129:4575/api/v1/enroll', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
+    setStatus({ type: 'loading', message: 'Starting biometric enrollment...' })
+    const result = await registerDriverWithWebAuthn(publicKey.toString())
+    setStatus({ 
+      type: 'success', 
+      message: '✅ Enrolled with biometric!', 
+      detail: 'PDA: ' + result.enroll.credentialPda 
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Enroll failed')
-    setStatus({ type: 'success', message: '✅ Enrolled!', detail: 'PDA: ' + data.credentialPda })
   } catch (e: any) {
     setStatus({ type: 'error', message: '❌ ' + e.message })
   }
@@ -78,7 +78,7 @@ const verify = async () => {
   if (!publicKey) return
   try {
     setStatus({ type: 'loading', message: 'Verifying identity...' })
-    const res = await fetch('http://192.168.0.129:4575/api/v1/verify', {
+    const res = await fetch(`${API_BASE_URL}/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
@@ -95,7 +95,7 @@ const revoke = async () => {
   if (!publicKey) return
   try {
     setStatus({ type: 'loading', message: 'Revoking credential...' })
-    const res = await fetch('http://192.168.0.129:4575/api/v1/revoke', {
+    const res = await fetch(`${API_BASE_URL}/revoke`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
@@ -110,20 +110,14 @@ const revoke = async () => {
 const closePda = async () => {
   if (!publicKey) return
   try {
-    setStatus({ type: 'loading', message: 'Closing old PDA...' })
-    const program = getProgram()
-    const [credentialPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('credential'), publicKey.toBuffer()],
-      PROGRAM_ID
-    )
-    await (program.methods as any)
-      .close()
-      .accounts({
-        credential: credentialPda,
-        owner: publicKey,
-        platform: publicKey, // Phantom was the platform in old enrollment
-      })
-      .rpc()
+    setStatus({ type: 'loading', message: 'Closing PDA...' })
+    const res = await fetch(`${API_BASE_URL}/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Close failed')
     setStatus({ type: 'success', message: '✅ PDA closed! Now enroll again.' })
   } catch (e: any) {
     const { message, detail } = parseError(e)
@@ -141,6 +135,19 @@ const closePda = async () => {
     <main style={{ padding: 40, fontFamily: 'monospace', maxWidth: 700 }}>
       <h1>Project X — Identity Infrastructure</h1>
       <p>OAuth for the physical world, powered by Solana</p>
+
+        {/* Quick Nav */}
+  <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
+    <a href="/register" style={{ padding: '8px 16px', background: '#166534', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 13 }}>
+      Register Identity
+    </a>
+    <a href="/party?role=partyA" style={{ padding: '8px 16px', background: '#1e3a5f', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 13 }}>
+      Join as Party A
+    </a>
+    <a href="/party?role=partyB" style={{ padding: '8px 16px', background: '#3b1f6e', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 13 }}>
+      Join as Party B
+    </a>
+  </div>
 
       <WalletMultiButton />
 

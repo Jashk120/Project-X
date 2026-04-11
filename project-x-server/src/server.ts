@@ -1,26 +1,31 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import { buildApp } from "./app";
 import { env } from "./config/env";
 import { logger } from "./logger";
 import { Server } from "socket.io";
 import { registerSocketHandlers } from "./socket/socket.handler";
+import { setIo } from "./socket/socket.instance";
 
 const start = async () => {
   try {
-    const app = buildApp();
-
-    await app.listen({ port: Number(env.PORT), host: "0.0.0.0" });
+    const httpServer = createServer();
 
     // attach socket.io to the same http server
-    const io = new Server(app.server, {
+    const io = new Server(httpServer, {
+      path: "/socket.io",
+      addTrailingSlash: false,
       cors: {
         origin: "*", // tighten this in production
         methods: ["GET", "POST"]
-      }
-    })
+      },
+    });
 
-    registerSocketHandlers(io)
-    logger.info("socket.io attached")
+    setIo(io);
+    registerSocketHandlers(io);
+    logger.info("socket.io attached");
+    const app = buildApp(httpServer);
+    await app.listen({ port: Number(env.PORT), host: "0.0.0.0" });
 
     process.on("SIGINT", async () => {
       logger.info("shutting down...");

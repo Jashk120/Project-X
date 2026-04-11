@@ -1,6 +1,7 @@
 # -----------------------------
 # General
 # -----------------------------
+.codex
 node_modules/
 .env
 .env.*
@@ -22,6 +23,7 @@ project-x/node_modules/
 project-x/.env*
 project-x/.vercel
 project-x/.turbo
+project-x/data/users.json
 
 # -----------------------------
 # Fastify Server (project-x-server)
@@ -30,6 +32,7 @@ project-x-server/node_modules/
 project-x-server/dist/
 project-x-server/.env*
 project-x-server/*.log
+project-x-server/.codex
 
 # -----------------------------
 # Anchor Program (project-x-program)

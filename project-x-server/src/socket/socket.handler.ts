@@ -1,104 +1,131 @@
 import { Server, Socket } from 'socket.io'
-import { verifyDriverForRider } from './socket.service'
+import { filestore } from '../db/filestore'
 
-function getRoomId(driverPubkey: string, riderPubkey: string, identifier: string): string {
-  return `${driverPubkey}:${riderPubkey}:${identifier}`
-}
+type PartyRole = 'partyA' | 'partyB'
 
 interface JoinPayload {
-  driverPubkey: string
-  riderPubkey: string
-  identifier: string
+  sessionId: string
+  pubkey: string
+  role: PartyRole
 }
 
 interface ThumbPayload {
-  driverPubkey: string
-  riderPubkey: string
-  identifier: string
+  sessionId: string
+  pubkey: string
+  role: PartyRole
 }
 
-// in-memory room state
-const roomState = new Map<string, { hasDriver: boolean, hasRider: boolean }>()
+type RoomState = {
+  sessionId: string
+  partyA: string
+  partyB: string
+  hasPartyA: boolean
+  hasPartyB: boolean
+}
+
+export const roomState = new Map<string, RoomState>()
+
+function getSessionOrEmit(socket: Socket, sessionId: string) {
+  const session = filestore.getSession(sessionId)
+  if (!session) {
+    socket.emit('session:error', { error: 'session not found or expired' })
+    return null
+  }
+
+  return session
+}
+
+function getExpectedPubkey(
+  session: { driverPubkey: string, riderPubkey: string },
+  role: PartyRole,
+) {
+  return role === 'partyA' ? session.driverPubkey : session.riderPubkey
+}
+
+function isPartyRole(role: string): role is PartyRole {
+  return role === 'partyA' || role === 'partyB'
+}
 
 export function registerSocketHandlers(io: Server) {
   io.on('connection', (socket: Socket) => {
     console.log('socket connected:', socket.id)
 
-    socket.on('rider:join', ({ driverPubkey, riderPubkey, identifier }: JoinPayload) => {
-      const roomId = getRoomId(driverPubkey, riderPubkey, identifier)
-      socket.join(roomId)
-      socket.data.role = 'rider'
-      socket.data.roomId = roomId
+    socket.on('join', ({ sessionId, pubkey, role }: JoinPayload) => {
+      if (!isPartyRole(role)) {
+        socket.emit('session:error', { error: 'invalid party role' })
+        return
+      }
 
-      const state = roomState.get(roomId) || { hasDriver: false, hasRider: false }
-      state.hasRider = true
-      roomState.set(roomId, state)
+      const session = getSessionOrEmit(socket, sessionId)
+      if (!session) return
 
-      console.log(`rider ${riderPubkey} joined room: ${roomId}`)
+      if (pubkey !== getExpectedPubkey(session, role)) {
+        socket.emit('session:error', { error: `${role} pubkey does not match session` })
+        return
+      }
 
-      if (state.hasDriver) {
-        // driver already waiting — tell rider driver is ready
-        socket.emit('driver:connected')
-        // tell driver rider just joined
-        socket.to(roomId).emit('rider:waiting')
-      } else {
-        // driver not here yet — tell driver when they join
-        socket.to(roomId).emit('rider:waiting')
+      socket.join(sessionId)
+      socket.data.role = role
+      socket.data.roomId = sessionId
+
+      const state = roomState.get(sessionId) || {
+        sessionId,
+        partyA: session.driverPubkey,
+        partyB: session.riderPubkey,
+        hasPartyA: false,
+        hasPartyB: false,
+      }
+
+      if (role === 'partyA') state.hasPartyA = true
+      if (role === 'partyB') state.hasPartyB = true
+      roomState.set(sessionId, state)
+
+      console.log(`${role} ${pubkey} joined room: ${sessionId}`)
+
+      if (state.hasPartyA && state.hasPartyB) {
+        io.to(sessionId).emit('party:connected')
       }
     })
 
-    socket.on('driver:join', ({ driverPubkey, riderPubkey, identifier }: JoinPayload) => {
-      const roomId = getRoomId(driverPubkey, riderPubkey, identifier)
-      socket.join(roomId)
-      socket.data.role = 'driver'
-      socket.data.roomId = roomId
-      socket.data.driverPubkey = driverPubkey
-
-      const state = roomState.get(roomId) || { hasDriver: false, hasRider: false }
-      state.hasDriver = true
-      roomState.set(roomId, state)
-
-      console.log(`driver ${driverPubkey} joined room: ${roomId}`)
-
-      if (state.hasRider) {
-        // rider already waiting — immediately prompt driver
-        socket.emit('rider:waiting')
-        // tell rider driver is now connected
-        socket.to(roomId).emit('driver:connected')
-      } else {
-        socket.to(roomId).emit('driver:connected')
+    socket.on('driver:thumb', ({ sessionId, pubkey, role }: ThumbPayload) => {
+      if (!isPartyRole(role)) {
+        socket.emit('session:error', { error: 'invalid party role' })
+        return
       }
-    })
 
-    socket.on('driver:thumb', async ({ driverPubkey, riderPubkey, identifier }: ThumbPayload) => {
-      const roomId = getRoomId(driverPubkey, riderPubkey, identifier)
-      console.log(`thumb pressed by ${driverPubkey} in room: ${roomId}`)
+      const state = roomState.get(sessionId)
+      if (!state) {
+        socket.emit('session:error', { error: 'session room not found' })
+        return
+      }
 
-      const result = await verifyDriverForRider(driverPubkey)
+      const expectedPubkey = role === 'partyA' ? state.partyA : state.partyB
+      if (pubkey !== expectedPubkey) {
+        socket.emit('session:error', { error: `${role} pubkey does not match session` })
+        return
+      }
 
-      io.to(roomId).emit('verify:result', {
-        verified: result.verified,
-        reason: result.reason,
-        driverPubkey,
+      console.log(`verification requested by ${role} ${pubkey} in room: ${sessionId}`)
+
+      io.to(sessionId).emit('driver:verifying', {
+        pubkey,
+        role,
         timestamp: Date.now()
       })
-
-      // cleanup room state after verification
-      roomState.delete(roomId)
     })
 
     socket.on('disconnect', () => {
       // cleanup if driver or rider disconnects
-      const roomId = socket.data.roomId
-      if (roomId) {
-        const state = roomState.get(roomId)
+      const sessionId = socket.data.roomId
+      if (sessionId) {
+        const state = roomState.get(sessionId)
         if (state) {
-          if (socket.data.role === 'driver') state.hasDriver = false
-          if (socket.data.role === 'rider') state.hasRider = false
-          if (!state.hasDriver && !state.hasRider) {
-            roomState.delete(roomId)
+          if (socket.data.role === 'partyA') state.hasPartyA = false
+          if (socket.data.role === 'partyB') state.hasPartyB = false
+          if (!state.hasPartyA && !state.hasPartyB) {
+            roomState.delete(sessionId)
           } else {
-            roomState.set(roomId, state)
+            roomState.set(sessionId, state)
           }
         }
       }

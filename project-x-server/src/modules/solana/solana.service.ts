@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { program, platformKeypair, PROGRAM_ID } from "../../config/solana";
+import { connection, program, platformKeypair, PROGRAM_ID } from "../../config/solana";
 
 export function getCredentialPDA(ownerPubkey: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
@@ -18,20 +18,25 @@ export function parsePublicKey(key: string, label = "publicKey"): PublicKey {
 
 // ------- enroll -------
 // platform signs + pays, owner is the subject (driver)
-export async function enroll(subjectPubkey: string) {
+export async function enroll(
+  subjectPubkey: string,
+  credentialHash: Buffer = Buffer.alloc(32, 1),
+) {
   const ownerKey = parsePublicKey(subjectPubkey, "subjectPubkey");
   const [credentialPda] = getCredentialPDA(ownerKey);
 
-  const credentialHash = Array(32).fill(1); // placeholder hash, extend later
+  if (credentialHash.length !== 32) {
+    throw new Error("credentialHash must be 32 bytes");
+  }
 
   const tx = await program.methods
-    .enroll(credentialHash)
+    .enroll(Array.from(credentialHash))
     .accounts({
       credential: credentialPda,
       owner: ownerKey,
       platform: platformKeypair.publicKey,
       systemProgram: new PublicKey("11111111111111111111111111111111"),
-    }as any)
+    } as any)
     .signers([platformKeypair])
     .rpc();
 
@@ -101,6 +106,15 @@ export async function status(subjectPubkey: string) {
   const ownerKey = parsePublicKey(subjectPubkey, "subjectPubkey");
   const [credentialPda] = getCredentialPDA(ownerKey);
 
+  const accountInfo = await connection.getAccountInfo(credentialPda);
+  if (!accountInfo) {
+    return {
+      enrolled: false,
+      isActive: false,
+      credentialPda: credentialPda.toString(),
+    };
+  }
+
   try {
     const account = await (program.account as any).credential.fetch(
       credentialPda
@@ -113,12 +127,10 @@ export async function status(subjectPubkey: string) {
       enrolledAt: account.enrolledAt.toString(),
       credentialPda: credentialPda.toString(),
     };
-  } catch {
-    return {
-      enrolled: false,
-      isActive: false,
-      credentialPda: credentialPda.toString(),
-    };
+  } catch (err: any) {
+    throw new Error(
+      `failed to decode credential account ${credentialPda.toString()}: ${err?.message || "unknown error"}`
+    );
   }
 }
 

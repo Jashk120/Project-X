@@ -1,30 +1,59 @@
 'use client'
 
 import { useState, useEffect, useRef, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { io, Socket } from 'socket.io-client'
+import { ACTIVE_TRIP_ID, ensureActiveTripSession, fetchUsers } from '../lib/active-session'
+import { API_BASE_URL } from '../lib/webauthn'
 
-type VerifyStatus = 'idle' | 'connecting' | 'waiting' | 'verified' | 'failed' | 'revoked'
+type VerifyStatus = 'idle' | 'connecting' | 'waiting' | 'verifying' | 'verified' | 'failed' | 'revoked'
 
-const SERVER = 'http://10.53.148.125:4575'
+const WEBAUTHN_VERIFY_BEGIN_URL = `${API_BASE_URL}/webauthn/verify/begin`
+const WEBAUTHN_VERIFY_COMPLETE_URL = `${API_BASE_URL}/webauthn/verify/complete`
+
+function getStoredRiderPubkey(): string | null {
+  const stored = localStorage.getItem('project_x_keypair')
+  if (!stored) return null
+
+  const parsed = JSON.parse(stored) as { publicKey?: string, pubkey?: string }
+  return parsed.publicKey ?? parsed.pubkey ?? null
+}
 
 function RiderContent() {
-  const searchParams = useSearchParams()
-  const [driverPubkey, setDriverPubkey] = useState('Hh7CMtUBuTtWhmByqgsy8UGz1kmNckRKB8mp9Yrbvirf')
-  const [riderPubkey, setRiderPubkey] = useState('Hh7CMtUBuTtWhmByqgsy8UGz1kmNckRKB8mp9Yrbvirf')
-  const [identifier, setIdentifier] = useState('123')
+  const [driverPubkey, setDriverPubkey] = useState('')
+  const [riderPubkey, setRiderPubkey] = useState('')
   const [status, setStatus] = useState<VerifyStatus>('idle')
   const [errorDetail, setErrorDetail] = useState('')
+  const [sessionError, setSessionError] = useState('')
   const socketRef = useRef<Socket | null>(null)
+  const joinedRef = useRef(false)
+  const verifyInFlightRef = useRef(false)
 
   useEffect(() => {
-    const driver = searchParams.get('driver')
-    const rider = searchParams.get('rider')
-    const id = searchParams.get('id')
-    if (driver) setDriverPubkey(driver)
-    if (rider) setRiderPubkey(rider)
-    if (id) setIdentifier(id)
-  }, [searchParams])
+    let cancelled = false
+
+    async function prepareSession() {
+      try {
+        const users = await fetchUsers()
+        if (cancelled) return
+
+        setDriverPubkey(users.driver ?? '')
+        setRiderPubkey(getStoredRiderPubkey() ?? '')
+        setSessionError('')
+        await ensureActiveTripSession(users)
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setSessionError(error instanceof Error ? error.message : 'Unable to prepare active trip')
+          setStatus('failed')
+        }
+      }
+    }
+
+    prepareSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -32,21 +61,71 @@ function RiderContent() {
     }
   }, [])
 
-  const joinSession = () => {
-    if (!driverPubkey || !riderPubkey || !identifier) return
+  const verifyIdentity = async () => {
+    if (!socketRef.current || !riderPubkey || verifyInFlightRef.current) return
 
+    try {
+      verifyInFlightRef.current = true
+      setStatus('verifying')
+      setErrorDetail('')
+
+      const beginRes = await fetch(WEBAUTHN_VERIFY_BEGIN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: ACTIVE_TRIP_ID, subjectPubkey: riderPubkey }),
+      })
+      const beginData = await beginRes.json()
+      if (!beginRes.ok) throw new Error(beginData.error || 'Verification begin failed')
+
+      const { startAuthentication } = await import('@simplewebauthn/browser')
+      const authResponse = await startAuthentication({ optionsJSON: beginData })
+
+      const completeRes = await fetch(WEBAUTHN_VERIFY_COMPLETE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: ACTIVE_TRIP_ID,
+          subjectPubkey: riderPubkey,
+          response: authResponse,
+        }),
+      })
+      const completeData = await completeRes.json()
+      if (!completeRes.ok) throw new Error(completeData.error || 'Verification complete failed')
+
+      socketRef.current.emit('driver:thumb', {
+        sessionId: ACTIVE_TRIP_ID,
+        pubkey: riderPubkey,
+        role: 'partyB',
+      })
+    } catch (error: unknown) {
+      setStatus('failed')
+      setErrorDetail(error instanceof Error ? error.message : 'Verification failed')
+    } finally {
+      verifyInFlightRef.current = false
+    }
+  }
+
+  const joinSession = () => {
+    if (!driverPubkey || !riderPubkey || joinedRef.current) return
+
+    joinedRef.current = true
     setStatus('connecting')
 
-    const socket = io(SERVER)
+    const socket = io(window.location.origin, { path: '/socket.io' })
     socketRef.current = socket
 
     socket.on('connect', () => {
-      socket.emit('rider:join', { driverPubkey, riderPubkey, identifier })
+      socket.emit('join', { sessionId: ACTIVE_TRIP_ID, pubkey: riderPubkey, role: 'partyB' })
       setStatus('waiting')
     })
 
-    socket.on('driver:connected', () => {
-      console.log('driver connected to room')
+    socket.on('party:connected', () => {
+      console.log('both parties connected to room')
+    })
+
+    socket.on('driver:verifying', ({ role }: { role?: string }) => {
+      if (role !== 'partyA') return
+      void verifyIdentity()
     })
 
     socket.on('verify:result', ({ verified, reason }: { verified: boolean, reason?: string }) => {
@@ -62,11 +141,23 @@ function RiderContent() {
     socket.on('disconnect', () => {
       console.log('socket disconnected')
     })
+
+    socket.on('session:error', ({ error }: { error: string }) => {
+      setStatus('failed')
+      setErrorDetail(error)
+    })
   }
+
+  useEffect(() => {
+    if (driverPubkey && riderPubkey) {
+      joinSession()
+    }
+  }, [driverPubkey, riderPubkey])
 
   const reset = () => {
     socketRef.current?.disconnect()
     socketRef.current = null
+    joinedRef.current = false
     setStatus('idle')
     setErrorDetail('')
   }
@@ -75,6 +166,7 @@ function RiderContent() {
     idle:       { bg: '#1c1917', border: '#444',    emoji: '🔍', text: 'Enter session details to begin' },
     connecting: { bg: '#1c1917', border: '#f0a500', emoji: '⏳', text: 'Connecting...' },
     waiting:    { bg: '#1c1917', border: '#3b82f6', emoji: '👍', text: 'Waiting for driver to press thumb...' },
+    verifying:  { bg: '#1c1917', border: '#f0a500', emoji: '⏳', text: 'Verifying your identity...' },
     verified:   { bg: '#14532d', border: '#22c55e', emoji: '✅', text: 'Driver Verified — Safe to ride!' },
     failed:     { bg: '#7f1d1d', border: '#ef4444', emoji: '❌', text: 'Verification Failed' },
     revoked:    { bg: '#7f1d1d', border: '#ef4444', emoji: '🚫', text: 'Driver Credential Revoked — Do not ride!' },
@@ -87,30 +179,30 @@ function RiderContent() {
       <h1>🧍 Rider Verification</h1>
       <p style={{ color: '#888' }}>Project X — Verify your driver before you ride</p>
 
+      <div style={{
+        padding: 16, borderRadius: 10, marginTop: 20,
+        background: '#111', border: '1px solid #333'
+      }}>
+        <p style={{ margin: 0, fontSize: 11, color: '#888' }}>Your Rider Identity</p>
+        <p style={{ margin: '6px 0 0', fontSize: 11, color: '#22c55e', wordBreak: 'break-all' }}>
+          {riderPubkey || 'Loading...'}
+        </p>
+      </div>
+
       <div style={{ marginTop: 24 }}>
-        {/* inputs — hidden once session started */}
-        {status === 'idle' && (
-          <div style={{ marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', color: '#888', marginBottom: 6, fontSize: 13 }}>Driver Pubkey</label>
-              <input value={driverPubkey} onChange={e => setDriverPubkey(e.target.value)}
-                placeholder="Driver wallet address..."
-                style={{ width: '100%', padding: '10px 14px', background: '#111', border: '1px solid #333', borderRadius: 6, color: 'white', fontFamily: 'monospace', fontSize: 12, boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', color: '#888', marginBottom: 6, fontSize: 13 }}>Rider Pubkey</label>
-              <input value={riderPubkey} onChange={e => setRiderPubkey(e.target.value)}
-                placeholder="Your wallet address..."
-                style={{ width: '100%', padding: '10px 14px', background: '#111', border: '1px solid #333', borderRadius: 6, color: 'white', fontFamily: 'monospace', fontSize: 12, boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', color: '#888', marginBottom: 6, fontSize: 13 }}>Session Identifier</label>
-              <input value={identifier} onChange={e => setIdentifier(e.target.value)}
-                placeholder="Trip ID, booking ID, etc..."
-                style={{ width: '100%', padding: '10px 14px', background: '#111', border: '1px solid #333', borderRadius: 6, color: 'white', fontFamily: 'monospace', fontSize: 12, boxSizing: 'border-box' }} />
-            </div>
-          </div>
-        )}
+        <div style={{ marginBottom: 20, padding: 16, background: '#111', border: '1px solid #333', borderRadius: 8 }}>
+          <p style={{ margin: 0, fontSize: 11, color: '#888' }}>Driver Identity</p>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: '#aaa', wordBreak: 'break-all' }}>
+            {driverPubkey || 'Missing'}
+          </p>
+          <p style={{ margin: '12px 0 0', fontSize: 11, color: '#888' }}>Active Trip</p>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: '#22c55e' }}>{ACTIVE_TRIP_ID}</p>
+          {sessionError && (
+            <p style={{ margin: '8px 0 0', color: '#fca5a5', fontSize: 11, wordBreak: 'break-word' }}>
+              {sessionError}
+            </p>
+          )}
+        </div>
 
         {/* status box */}
         <div style={{
@@ -121,14 +213,6 @@ function RiderContent() {
           <p style={{ margin: 0, fontSize: 18, fontWeight: 'bold', color: s.border }}>{s.text}</p>
           {errorDetail && <p style={{ margin: '8px 0 0', fontSize: 12, color: '#aaa' }}>{errorDetail}</p>}
         </div>
-
-        {status === 'idle' && (
-          <button onClick={joinSession}
-            disabled={!driverPubkey || !riderPubkey || !identifier}
-            style={{ width: '100%', padding: '14px', fontSize: 16, fontWeight: 'bold', background: '#7c3aed', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-            Join Session
-          </button>
-        )}
 
         {(status === 'verified' || status === 'failed' || status === 'revoked') && (
           <button onClick={reset} style={{
