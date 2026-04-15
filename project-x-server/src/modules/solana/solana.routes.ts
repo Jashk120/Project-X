@@ -22,6 +22,7 @@ export async function solanaRoutes(app: FastifyInstance) {
         properties: {
           subjectPubkey: { type: "string" },
           riderPubkey: { type: "string" }, // optional, for caller's records
+          sessionId: { type: "string" },
         },
       },
     },

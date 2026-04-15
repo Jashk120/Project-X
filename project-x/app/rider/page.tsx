@@ -1,11 +1,18 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense, useEffectEvent } from 'react'
 import { io, Socket } from 'socket.io-client'
-import { ACTIVE_TRIP_ID, ensureActiveTripSession, fetchUsers } from '../lib/active-session'
+import {
+  ACTIVE_TRIP_ID,
+  SESSION_ID_OPTIONS,
+  getStoredSessionId,
+  joinRiderSession,
+  storeSessionId,
+} from '../lib/active-session'
 import { API_BASE_URL } from '../lib/webauthn'
+import { getCurrentCoordinates } from '../lib/location'
 
-type VerifyStatus = 'idle' | 'connecting' | 'waiting' | 'verifying' | 'verified' | 'failed' | 'revoked'
+type VerifyStatus = 'idle' | 'connecting' | 'waiting' | 'verifying' | 'verified' | 'failed' | 'revoked' | 'disconnected'
 
 const WEBAUTHN_VERIFY_BEGIN_URL = `${API_BASE_URL}/webauthn/verify/begin`
 const WEBAUTHN_VERIFY_COMPLETE_URL = `${API_BASE_URL}/webauthn/verify/complete`
@@ -18,32 +25,69 @@ function getStoredRiderPubkey(): string | null {
   return parsed.publicKey ?? parsed.pubkey ?? null
 }
 
+function getVerificationErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : 'Verification failed'
+  if (message.toLowerCase().includes('credential not found')) {
+    return 'Biometric credential missing for this browser identity. Re-register this rider identity.'
+  }
+
+  return message
+}
+
 function RiderContent() {
   const [driverPubkey, setDriverPubkey] = useState('')
   const [riderPubkey, setRiderPubkey] = useState('')
   const [status, setStatus] = useState<VerifyStatus>('idle')
   const [errorDetail, setErrorDetail] = useState('')
   const [sessionError, setSessionError] = useState('')
+  const [sessionReady, setSessionReady] = useState(false)
+  const [sessionId, setSessionId] = useState(ACTIVE_TRIP_ID)
+  const [sessionRefreshKey, setSessionRefreshKey] = useState(0)
   const socketRef = useRef<Socket | null>(null)
   const joinedRef = useRef(false)
   const verifyInFlightRef = useRef(false)
+
+  const reset = () => {
+    socketRef.current?.disconnect()
+    socketRef.current = null
+    joinedRef.current = false
+    setStatus('idle')
+    setErrorDetail('')
+    setSessionReady(false)
+  }
+
+  const retrySessionJoin = () => {
+    reset()
+    setSessionError('')
+    setDriverPubkey('')
+    setSessionRefreshKey((value) => value + 1)
+  }
+
+  useEffect(() => {
+    const storedRiderPubkey = getStoredRiderPubkey() ?? ''
+    setSessionId(getStoredSessionId())
+    setRiderPubkey(storedRiderPubkey)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
 
     async function prepareSession() {
+      if (!riderPubkey) return
+
       try {
-        const users = await fetchUsers()
+        const session = await joinRiderSession(sessionId, riderPubkey)
         if (cancelled) return
 
-        setDriverPubkey(users.driver ?? '')
-        setRiderPubkey(getStoredRiderPubkey() ?? '')
+        setDriverPubkey(session.driverPubkey)
         setSessionError('')
-        await ensureActiveTripSession(users)
+        setSessionReady(true)
+        setStatus('idle')
       } catch (error: unknown) {
         if (!cancelled) {
-          setSessionError(error instanceof Error ? error.message : 'Unable to prepare active trip')
+          setSessionError(error instanceof Error ? error.message : 'Unable to prepare session')
           setStatus('failed')
+          setSessionReady(false)
         }
       }
     }
@@ -53,7 +97,7 @@ function RiderContent() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [riderPubkey, sessionId, sessionRefreshKey])
 
   useEffect(() => {
     return () => {
@@ -61,7 +105,7 @@ function RiderContent() {
     }
   }, [])
 
-  const verifyIdentity = async () => {
+  const verifyIdentity = useEffectEvent(async () => {
     if (!socketRef.current || !riderPubkey || verifyInFlightRef.current) return
 
     try {
@@ -72,7 +116,7 @@ function RiderContent() {
       const beginRes = await fetch(WEBAUTHN_VERIFY_BEGIN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: ACTIVE_TRIP_ID, subjectPubkey: riderPubkey }),
+        body: JSON.stringify({ sessionId, subjectPubkey: riderPubkey }),
       })
       const beginData = await beginRes.json()
       if (!beginRes.ok) throw new Error(beginData.error || 'Verification begin failed')
@@ -84,7 +128,7 @@ function RiderContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: ACTIVE_TRIP_ID,
+          sessionId,
           subjectPubkey: riderPubkey,
           response: authResponse,
         }),
@@ -92,21 +136,25 @@ function RiderContent() {
       const completeData = await completeRes.json()
       if (!completeRes.ok) throw new Error(completeData.error || 'Verification complete failed')
 
+      const coords = await getCurrentCoordinates()
+
       socketRef.current.emit('driver:thumb', {
-        sessionId: ACTIVE_TRIP_ID,
+        sessionId,
         pubkey: riderPubkey,
         role: 'partyB',
+        coords,
+        timestamp: new Date().toISOString(),
       })
     } catch (error: unknown) {
       setStatus('failed')
-      setErrorDetail(error instanceof Error ? error.message : 'Verification failed')
+      setErrorDetail(getVerificationErrorMessage(error))
     } finally {
       verifyInFlightRef.current = false
     }
-  }
+  })
 
-  const joinSession = () => {
-    if (!driverPubkey || !riderPubkey || joinedRef.current) return
+  useEffect(() => {
+    if (!sessionReady || !driverPubkey || !riderPubkey || joinedRef.current) return
 
     joinedRef.current = true
     setStatus('connecting')
@@ -115,7 +163,7 @@ function RiderContent() {
     socketRef.current = socket
 
     socket.on('connect', () => {
-      socket.emit('join', { sessionId: ACTIVE_TRIP_ID, pubkey: riderPubkey, role: 'partyB' })
+      socket.emit('join', { sessionId, pubkey: riderPubkey, role: 'partyB' })
       setStatus('waiting')
     })
 
@@ -139,27 +187,22 @@ function RiderContent() {
     })
 
     socket.on('disconnect', () => {
-      console.log('socket disconnected')
+      socketRef.current = null
+      joinedRef.current = false
+      setStatus('disconnected')
     })
 
     socket.on('session:error', ({ error }: { error: string }) => {
       setStatus('failed')
       setErrorDetail(error)
     })
-  }
+  }, [driverPubkey, riderPubkey, sessionId, sessionReady])
 
-  useEffect(() => {
-    if (driverPubkey && riderPubkey) {
-      joinSession()
-    }
-  }, [driverPubkey, riderPubkey])
-
-  const reset = () => {
-    socketRef.current?.disconnect()
-    socketRef.current = null
-    joinedRef.current = false
-    setStatus('idle')
-    setErrorDetail('')
+  const handleSessionChange = (nextSessionId: string) => {
+    if (nextSessionId === sessionId) return
+    retrySessionJoin()
+    storeSessionId(nextSessionId)
+    setSessionId(nextSessionId)
   }
 
   const statusConfig = {
@@ -170,6 +213,7 @@ function RiderContent() {
     verified:   { bg: '#14532d', border: '#22c55e', emoji: '✅', text: 'Driver Verified — Safe to ride!' },
     failed:     { bg: '#7f1d1d', border: '#ef4444', emoji: '❌', text: 'Verification Failed' },
     revoked:    { bg: '#7f1d1d', border: '#ef4444', emoji: '🚫', text: 'Driver Credential Revoked — Do not ride!' },
+    disconnected: { bg: '#1c1917', border: '#f0a500', emoji: '📡', text: 'Connection lost — retry to rejoin this session' },
   }
 
   const s = statusConfig[status]
@@ -195,8 +239,28 @@ function RiderContent() {
           <p style={{ margin: '6px 0 0', fontSize: 11, color: '#aaa', wordBreak: 'break-all' }}>
             {driverPubkey || 'Missing'}
           </p>
-          <p style={{ margin: '12px 0 0', fontSize: 11, color: '#888' }}>Active Trip</p>
-          <p style={{ margin: '6px 0 0', fontSize: 11, color: '#22c55e' }}>{ACTIVE_TRIP_ID}</p>
+          <p style={{ margin: '12px 0 0', fontSize: 11, color: '#888' }}>Session</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {SESSION_ID_OPTIONS.map((option) => (
+              <button
+                key={option}
+                onClick={() => handleSessionChange(option)}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: option === sessionId ? '1px solid #22c55e' : '1px solid #333',
+                  background: option === sessionId ? '#14532d' : '#1a1a1a',
+                  color: option === sessionId ? '#dcfce7' : '#aaa',
+                  cursor: 'pointer',
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: '#22c55e' }}>{sessionId}</p>
           {sessionError && (
             <p style={{ margin: '8px 0 0', color: '#fca5a5', fontSize: 11, wordBreak: 'break-word' }}>
               {sessionError}
@@ -214,12 +278,12 @@ function RiderContent() {
           {errorDetail && <p style={{ margin: '8px 0 0', fontSize: 12, color: '#aaa' }}>{errorDetail}</p>}
         </div>
 
-        {(status === 'verified' || status === 'failed' || status === 'revoked') && (
-          <button onClick={reset} style={{
+        {(status === 'verified' || status === 'failed' || status === 'revoked' || status === 'disconnected' || sessionError) && (
+          <button onClick={retrySessionJoin} style={{
             width: '100%', marginTop: 10, padding: '10px', background: 'transparent',
             color: '#888', border: '1px solid #333', borderRadius: 8, cursor: 'pointer'
           }}>
-            New Session
+            Retry Session Join
           </button>
         )}
       </div>

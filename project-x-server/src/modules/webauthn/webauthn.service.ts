@@ -9,10 +9,10 @@ import {
 } from "@simplewebauthn/server";
 import { createHash } from "crypto";
 import { env } from "../../config/env";
-import { enroll, parsePublicKey, verify } from "../solana/solana.service";
-import { filestore } from "../../db/filestore";
+import { enroll, parsePublicKey } from "../solana/solana.service";
+import * as store from "../../db/store";
 import { getIo } from "../../socket/socket.instance";
-import { areBothSigned, storeSignature } from "../session/session.service";
+import { storeSignature } from "../session/session.service";
 
 const expectedOrigins = env.WEBAUTHN_ORIGINS.split(",")
   .map((origin) => origin.trim())
@@ -50,7 +50,7 @@ function emitVerifyResult(
 }
 
 function getSessionParty(
-  session: { driverPubkey: string; riderPubkey: string },
+  session: { driverPubkey: string; riderPubkey: string | null },
   subjectPubkey: string,
 ): "partyA" | "partyB" {
   if (subjectPubkey === session.driverPubkey) return "partyA";
@@ -70,7 +70,7 @@ function getAuthenticationSignature(response: any): string {
 export async function beginRegistration(subjectPubkey: string) {
   const ownerKey = parsePublicKey(subjectPubkey, "subjectPubkey");
 
-  const existing = filestore.getCredential(ownerKey.toBase58());
+  const existing = await store.getCredential(ownerKey.toBase58());
 
   const options = await generateRegistrationOptions({
     rpName: env.WEBAUTHN_RP_NAME,
@@ -89,9 +89,9 @@ export async function beginRegistration(subjectPubkey: string) {
     supportedAlgorithmIDs: [-7, -257],
   });
 
-  filestore.saveRegChallenge(ownerKey.toBase58(), {
+  await store.saveChallenge(ownerKey.toBase58(), "registration", {
     challenge: options.challenge,
-    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
   });
 
   return options;
@@ -103,7 +103,10 @@ export async function completeRegistration(
 ) {
   const ownerKey = parsePublicKey(subjectPubkey, "subjectPubkey");
 
-  const challengeRecord = filestore.getRegChallenge(ownerKey.toBase58());
+  const challengeRecord = await store.getChallenge(
+    ownerKey.toBase58(),
+    "registration",
+  );
 
   if (!challengeRecord) {
     throw new Error("registration challenge not found or expired");
@@ -142,9 +145,9 @@ export async function completeRegistration(
       throw e
     }
   }
-  filestore.markRegChallengeUsed(ownerKey.toBase58())
+  await store.markChallengeUsed(ownerKey.toBase58(), "registration");
 
-  filestore.saveCredential(ownerKey.toBase58(), {
+  await store.saveCredential(ownerKey.toBase58(), {
     credentialId: response.id,
     publicKey: Buffer.from(credential.publicKey).toString("base64url"),
     counter: credential.counter,
@@ -168,7 +171,7 @@ export async function completeRegistration(
 
 export async function beginVerification(subjectPubkey: string) {
   const ownerKey = parsePublicKey(subjectPubkey, "subjectPubkey");
-  const credential = filestore.getCredential(ownerKey.toBase58());
+  const credential = await store.getCredential(ownerKey.toBase58());
 
   if (!credential) {
     throw new Error("credential not found");
@@ -183,9 +186,9 @@ export async function beginVerification(subjectPubkey: string) {
     userVerification: "required",
   });
 
-  filestore.saveAuthChallenge(ownerKey.toBase58(), {
+  await store.saveChallenge(ownerKey.toBase58(), "authentication", {
     challenge: options.challenge,
-    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
   });
 
   return options;
@@ -196,7 +199,7 @@ export async function completeVerification(
   subjectPubkey: string,
   response: any,
 ) {
-  const session = filestore.getSession(sessionId);
+  const session = await store.getSession(sessionId);
   if (!session) {
     throw new Error("session not found or expired");
   }
@@ -205,7 +208,10 @@ export async function completeVerification(
   const ownerPubkey = ownerKey.toBase58();
   const party = getSessionParty(session, ownerPubkey);
 
-  const challengeRecord = filestore.getAuthChallenge(ownerPubkey);
+  const challengeRecord = await store.getChallenge(
+    ownerPubkey,
+    "authentication",
+  );
 
   if (!challengeRecord) {
     throw new Error("authentication challenge not found or expired");
@@ -215,7 +221,7 @@ export async function completeVerification(
     throw new Error("authentication challenge already used");
   }
 
-  const credential = filestore.getCredential(ownerPubkey);
+  const credential = await store.getCredential(ownerPubkey);
 
   if (!credential) {
     throw new Error("credential not found");
@@ -247,32 +253,16 @@ export async function completeVerification(
     return result;
   }
 
-  let result: { verified: boolean; reason: string };
-
-  try {
-    await verify(ownerPubkey);
-    result = { verified: true, reason: "verified" };
-  } catch (err: any) {
-    result = {
-      verified: false,
-      reason: err?.message || "on-chain verification failed",
-    };
-  }
-
-  filestore.markAuthChallengeUsed(ownerPubkey);
-  filestore.saveCredential(ownerPubkey, {
+  await store.markChallengeUsed(ownerPubkey, "authentication");
+  await store.saveCredential(ownerPubkey, {
     ...credential,
     counter: verification.authenticationInfo.newCounter,
   });
 
-  if (result.verified) {
-    storeSignature(sessionId, party, getAuthenticationSignature(response));
-    if (areBothSigned(sessionId)) {
-      emitVerifyResult(sessionId, session.driverPubkey, result);
-    }
-  } else {
-    emitVerifyResult(sessionId, session.driverPubkey, result);
-  }
+  await storeSignature(sessionId, party, getAuthenticationSignature(response));
 
-  return result;
+  return {
+    verified: true,
+    reason: "biometric verified",
+  };
 }

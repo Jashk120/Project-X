@@ -14,6 +14,89 @@ export type ProjectXProgram = {
   },
   "instructions": [
     {
+      "name": "attestProximity",
+      "discriminator": [
+        254,
+        44,
+        45,
+        246,
+        107,
+        113,
+        57,
+        244
+      ],
+      "accounts": [
+        {
+          "name": "proximityAttestation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  120,
+                  105,
+                  109,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "rider"
+              },
+              {
+                "kind": "arg",
+                "path": "attestationNonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "rider"
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "sessionIdHash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "attestationNonce",
+          "type": "u64"
+        },
+        {
+          "name": "expiresAt",
+          "type": "i64"
+        }
+      ]
+    },
+    {
       "name": "close",
       "discriminator": [
         98,
@@ -192,6 +275,40 @@ export type ProjectXProgram = {
       ],
       "accounts": [
         {
+          "name": "proximityAttestation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  120,
+                  105,
+                  109,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "rider"
+              },
+              {
+                "kind": "arg",
+                "path": "attestationNonce"
+              }
+            ]
+          }
+        },
+        {
           "name": "credential",
           "pda": {
             "seeds": [
@@ -221,14 +338,27 @@ export type ProjectXProgram = {
           "name": "owner"
         },
         {
+          "name": "rider"
+        },
+        {
           "name": "verifier",
+          "writable": true,
           "signer": true
         }
       ],
       "args": [
         {
-          "name": "proximityVerified",
-          "type": "bool"
+          "name": "sessionIdHash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "attestationNonce",
+          "type": "u64"
         }
       ]
     }
@@ -246,6 +376,19 @@ export type ProjectXProgram = {
         100,
         135
       ]
+    },
+    {
+      "name": "proximityAttestation",
+      "discriminator": [
+        132,
+        9,
+        16,
+        50,
+        63,
+        16,
+        245,
+        101
+      ]
     }
   ],
   "errors": [
@@ -256,8 +399,8 @@ export type ProjectXProgram = {
     },
     {
       "code": 6001,
-      "name": "proximityCheckFailed",
-      "msg": "Proximity check failed — parties must be within 50m"
+      "name": "proximityAttestationExpired",
+      "msg": "Proximity attestation expired"
     },
     {
       "code": 6002,
@@ -268,6 +411,26 @@ export type ProjectXProgram = {
       "code": 6003,
       "name": "unauthorizedPlatform",
       "msg": "Only the enrolling platform can revoke this credential"
+    },
+    {
+      "code": 6004,
+      "name": "riderMismatch",
+      "msg": "Rider does not match proximity attestation"
+    },
+    {
+      "code": 6005,
+      "name": "invalidProximityAttestation",
+      "msg": "Invalid proximity attestation"
+    },
+    {
+      "code": 6006,
+      "name": "sessionMismatch",
+      "msg": "Session does not match proximity attestation"
+    },
+    {
+      "code": 6007,
+      "name": "invalidAttestationExpiry",
+      "msg": "Proximity attestation expiry must be in the future"
     }
   ],
   "types": [
@@ -300,6 +463,51 @@ export type ProjectXProgram = {
           {
             "name": "isActive",
             "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "proximityAttestation",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "rider",
+            "type": "pubkey"
+          },
+          {
+            "name": "platform",
+            "type": "pubkey"
+          },
+          {
+            "name": "sessionIdHash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "issuedAt",
+            "type": "i64"
+          },
+          {
+            "name": "expiresAt",
+            "type": "i64"
+          },
+          {
+            "name": "attestationNonce",
+            "type": "u64"
           },
           {
             "name": "bump",

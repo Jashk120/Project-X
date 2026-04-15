@@ -9,7 +9,7 @@ skip-lint = false
 project_x_program = "8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

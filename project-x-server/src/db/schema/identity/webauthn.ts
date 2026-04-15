@@ -1,6 +1,7 @@
 import {
   boolean,
   integer,
+  index,
   pgSchema,
   text,
   timestamp,
@@ -47,7 +48,14 @@ export const webauthnChallenges = identitySchema.table(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-  }
+  },
+  (table) => [
+    uniqueIndex("webauthn_challenges_owner_pubkey_flow_idx").on(
+      table.ownerPubkey,
+      table.flow,
+    ),
+    index("webauthn_challenges_expires_at_idx").on(table.expiresAt),
+  ]
 );
 
 export type WebauthnCredential = typeof webauthnCredentials.$inferSelect;

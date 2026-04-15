@@ -1,129 +1,88 @@
 'use client'
-import { useWallet } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
-import { useConnection } from '@solana/wallet-adapter-react'
-import { Program, AnchorProvider, web3 } from '@coral-xyz/anchor'
-import { PublicKey } from '@solana/web3.js'
-import idl from './idl/project_x_program.json'
-import { useState } from 'react'
-import { registerDriverWithWebAuthn } from './lib/webauthn'
 
-const PROGRAM_ID = new PublicKey('8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy')
+import { useEffect, useState } from 'react'
+import { API_BASE_URL } from './lib/webauthn'
 
 type StatusType = 'idle' | 'loading' | 'success' | 'error'
 
-interface Status {
+type Status = {
   type: StatusType
   message: string
-  detail?: string
+}
+
+const KEYPAIR_KEY = 'project_x_keypair'
+
+function getStoredPubkey() {
+  const stored = localStorage.getItem(KEYPAIR_KEY)
+  if (!stored) return null
+
+  try {
+    const parsed = JSON.parse(stored) as { pubkey?: unknown, publicKey?: unknown }
+    const value = parsed.pubkey ?? parsed.publicKey
+    return typeof value === 'string' && value ? value : null
+  } catch {
+    return null
+  }
 }
 
 export default function Home() {
-  const { publicKey, signTransaction, signAllTransactions } = useWallet()
-  const { connection } = useConnection()
+  const [pubkey, setPubkey] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>({ type: 'idle', message: '' })
-  const API_BASE_URL = process.env.NEXT_PUBLIC_PROJECT_X_API_URL
-  
-  const getProgram = () => {
-    const provider = new AnchorProvider(
-      connection,
-      { publicKey: publicKey!, signTransaction: signTransaction!, signAllTransactions: signAllTransactions! },
-      { commitment: 'confirmed' }
-    )
-    return new Program(idl as any, provider)
-  }
 
-  const parseError = (e: any): { message: string, detail: string } => {
-    // Anchor error codes
-    if (e?.error?.errorCode?.code) {
-      return {
-        message: e.error.errorCode.code,
-        detail: e.error.errorMessage || ''
+  useEffect(() => {
+    setPubkey(getStoredPubkey())
+  }, [])
+
+  const revoke = async () => {
+    if (!pubkey) return
+
+    try {
+      setStatus({ type: 'loading', message: 'Revoking credential...' })
+      const response = await fetch(`${API_BASE_URL}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectPubkey: pubkey }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Revoke failed')
       }
+
+      setStatus({ type: 'success', message: 'Credential revoked.' })
+    } catch (error: unknown) {
+      setStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Revoke failed',
+      })
     }
-    // Transaction simulation error
-    if (e?.logs) {
-      const relevantLog = e.logs.find((l: string) => l.includes('Error') || l.includes('failed'))
-      return {
-        message: e.message || 'Transaction failed',
-        detail: relevantLog || e.logs.slice(-1)[0] || ''
+  }
+
+  const closePda = async () => {
+    if (!pubkey) return
+
+    try {
+      setStatus({ type: 'loading', message: 'Closing credential account...' })
+      const response = await fetch(`${API_BASE_URL}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectPubkey: pubkey }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Close failed')
       }
-    }
-    // User rejected
-    if (e?.message?.includes('User rejected')) {
-      return { message: 'Transaction rejected by user', detail: '' }
-    }
-    return {
-      message: e?.message || 'Unknown error',
-      detail: e?.toString() || ''
+
+      setStatus({ type: 'success', message: 'Credential account closed.' })
+    } catch (error: unknown) {
+      setStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Close failed',
+      })
     }
   }
 
-const enroll = async () => {
-  if (!publicKey) return
-  try {
-    setStatus({ type: 'loading', message: 'Starting biometric enrollment...' })
-    const result = await registerDriverWithWebAuthn(publicKey.toString())
-    setStatus({ 
-      type: 'success', 
-      message: '✅ Enrolled with biometric!', 
-      detail: 'PDA: ' + result.enroll.credentialPda 
-    })
-  } catch (e: any) {
-    setStatus({ type: 'error', message: '❌ ' + e.message })
-  }
-}
-
-const verify = async () => {
-  if (!publicKey) return
-  try {
-    setStatus({ type: 'loading', message: 'Verifying identity...' })
-    const res = await fetch(`${API_BASE_URL}/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Verify failed')
-    setStatus({ type: 'success', message: '✅ Identity verified!' })
-  } catch (e: any) {
-    setStatus({ type: 'error', message: '❌ ' + e.message })
-  }
-}
-
-const revoke = async () => {
-  if (!publicKey) return
-  try {
-    setStatus({ type: 'loading', message: 'Revoking credential...' })
-    const res = await fetch(`${API_BASE_URL}/revoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Revoke failed')
-    setStatus({ type: 'success', message: '🚫 Credential revoked!' })
-  } catch (e: any) {
-    setStatus({ type: 'error', message: '❌ ' + e.message })
-  }
-}
-const closePda = async () => {
-  if (!publicKey) return
-  try {
-    setStatus({ type: 'loading', message: 'Closing PDA...' })
-    const res = await fetch(`${API_BASE_URL}/close`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subjectPubkey: publicKey.toString() }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Close failed')
-    setStatus({ type: 'success', message: '✅ PDA closed! Now enroll again.' })
-  } catch (e: any) {
-    const { message, detail } = parseError(e)
-    setStatus({ type: 'error', message: '❌ Close failed: ' + message, detail })
-  }
-}
   const statusColors: Record<StatusType, string> = {
     idle: '#888',
     loading: '#f0a500',
@@ -132,66 +91,128 @@ const closePda = async () => {
   }
 
   return (
-    <main style={{ padding: 40, fontFamily: 'monospace', maxWidth: 700 }}>
-      <h1>Project X — Identity Infrastructure</h1>
-      <p>OAuth for the physical world, powered by Solana</p>
+    <main style={{ padding: 40, fontFamily: 'monospace', maxWidth: 760, margin: '0 auto' }}>
+      <h1 style={{ marginBottom: 8 }}>Project X</h1>
+      <p style={{ marginTop: 0, color: '#aaa', lineHeight: 1.5 }}>
+        Identity infrastructure demo: the driver creates the session, the rider joins with the same
+        session id, and the backend binds both pubkeys before biometric and on-chain verification.
+      </p>
 
-        {/* Quick Nav */}
-  <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
-    <a href="/register" style={{ padding: '8px 16px', background: '#166534', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 13 }}>
-      Register Identity
-    </a>
-    <a href="/party?role=partyA" style={{ padding: '8px 16px', background: '#1e3a5f', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 13 }}>
-      Join as Party A
-    </a>
-    <a href="/party?role=partyB" style={{ padding: '8px 16px', background: '#3b1f6e', color: 'white', borderRadius: 6, textDecoration: 'none', fontSize: 13 }}>
-      Join as Party B
-    </a>
-  </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: 16,
+        marginTop: 24,
+      }}>
+        <a href="/demo" style={{
+          padding: 18,
+          borderRadius: 10,
+          background: '#16281b',
+          border: '1px solid #2f5b3a',
+          color: 'white',
+          textDecoration: 'none',
+        }}>
+          <strong>Register Identity</strong>
+          <p style={{ margin: '8px 0 0', color: '#b6d7bf', fontSize: 12 }}>
+            Create or reuse the local browser identity and enroll it with WebAuthn.
+          </p>
+        </a>
 
-      <WalletMultiButton />
+        <a href="/driver" style={{
+          padding: 18,
+          borderRadius: 10,
+          background: '#152233',
+          border: '1px solid #2d4668',
+          color: 'white',
+          textDecoration: 'none',
+        }}>
+          <strong>Driver Flow</strong>
+          <p style={{ margin: '8px 0 0', color: '#b8c8df', fontSize: 12 }}>
+            Creates or ensures the selected demo session id as party A.
+          </p>
+        </a>
 
-      {publicKey && (
-        <div style={{ marginTop: 20 }}>
-          <p style={{ fontSize: 12, color: '#888' }}>Connected: {publicKey.toString()}</p>
+        <a href="/rider" style={{
+          padding: 18,
+          borderRadius: 10,
+          background: '#261a35',
+          border: '1px solid #55327a',
+          color: 'white',
+          textDecoration: 'none',
+        }}>
+          <strong>Rider Flow</strong>
+          <p style={{ margin: '8px 0 0', color: '#d2c0ea', fontSize: 12 }}>
+            Joins the same selected demo session id as party B using the local pubkey.
+          </p>
+        </a>
+      </div>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-            <button onClick={enroll} disabled={status.type === 'loading'}
-              style={{ padding: '10px 20px', cursor: 'pointer', background: '#7c3aed', color: 'white', border: 'none', borderRadius: 6 }}>
-              Enroll Identity
-            </button>
-            <button onClick={verify} disabled={status.type === 'loading'}
-              style={{ padding: '10px 20px', cursor: 'pointer', background: '#2563eb', color: 'white', border: 'none', borderRadius: 6 }}>
-              Verify Identity
-            </button>
-            <button onClick={revoke} disabled={status.type === 'loading'}
-              style={{ padding: '10px 20px', cursor: 'pointer', background: '#dc2626', color: 'white', border: 'none', borderRadius: 6 }}>
+      <div style={{
+        marginTop: 28,
+        padding: 18,
+        borderRadius: 10,
+        background: '#111',
+        border: '1px solid #333',
+      }}>
+        <p style={{ margin: 0, fontSize: 12, color: '#888' }}>Current Local Identity</p>
+        <p style={{ margin: '8px 0 0', color: pubkey ? '#22c55e' : '#aaa', wordBreak: 'break-all' }}>
+          {pubkey ?? 'No browser-local identity found. Start at Register Identity.'}
+        </p>
+
+        {pubkey && (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
+            <button
+              onClick={revoke}
+              disabled={status.type === 'loading'}
+              style={{
+                padding: '10px 18px',
+                cursor: 'pointer',
+                background: '#dc2626',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+              }}
+            >
               Revoke
             </button>
-            <button onClick={closePda} disabled={status.type === 'loading'}
-              style={{ padding: '10px 20px', cursor: 'pointer', background: '#854d0e', color: 'white', border: 'none', borderRadius: 6 }}>
+            <button
+              onClick={closePda}
+              disabled={status.type === 'loading'}
+              style={{
+                padding: '10px 18px',
+                cursor: 'pointer',
+                background: '#854d0e',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+              }}
+            >
               Close PDA
             </button>
           </div>
+        )}
 
-          {status.message && (
-            <div style={{
-              marginTop: 16, padding: 16, borderRadius: 8,
-              border: `1px solid ${statusColors[status.type]}`,
-              background: statusColors[status.type] + '11'
-            }}>
-              <p style={{ margin: 0, color: statusColors[status.type], fontWeight: 'bold' }}>
-                {status.type === 'loading' ? '⏳ ' : ''}{status.message}
-              </p>
-              {status.detail && (
-                <p style={{ margin: '8px 0 0', fontSize: 11, color: '#aaa', wordBreak: 'break-all' }}>
-                  {status.detail}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        {status.message && (
+          <p style={{ margin: '14px 0 0', color: statusColors[status.type] }}>
+            {status.message}
+          </p>
+        )}
+      </div>
+
+      <div style={{
+        marginTop: 20,
+        padding: 18,
+        borderRadius: 10,
+        background: '#101010',
+        border: '1px solid #2a2a2a',
+      }}>
+        <p style={{ margin: 0, color: '#ddd' }}>Current demo assumptions</p>
+        <p style={{ margin: '10px 0 0', color: '#888', fontSize: 13, lineHeight: 1.5 }}>
+          The Next app ships with preset demo session ids: <code>active-trip</code>, <code>active-trip-1</code>,
+          and <code>active-trip-2</code>. Later the Flutter app can replace that manual selection with BLE
+          while keeping the same backend session lifecycle.
+        </p>
+      </div>
     </main>
   )
 }

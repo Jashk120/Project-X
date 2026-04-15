@@ -13,11 +13,12 @@ export async function enroll(req: FastifyRequest, reply: FastifyReply) {
 
 export async function verify(req: FastifyRequest, reply: FastifyReply) {
   try {
-    const { subjectPubkey, riderPubkey } = req.body as {
+    const { subjectPubkey, riderPubkey, sessionId } = req.body as {
       subjectPubkey: string;
       riderPubkey?: string;
+      sessionId?: string;
     };
-    const result = await service.verify(subjectPubkey, riderPubkey);
+    const result = await service.verify(subjectPubkey, riderPubkey, sessionId);
     return reply.code(200).send(result);
   } catch (err: any) {
     // surface Anchor errors cleanly

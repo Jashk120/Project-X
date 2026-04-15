@@ -2,20 +2,17 @@
 
 import { API_BASE_URL } from './webauthn'
 
-type UsersStore = {
-  driver: string | null
-  rider: string | null
-}
-
 type SessionResponse = {
   sessionId: string
   driverPubkey: string
-  riderPubkey: string
+  riderPubkey: string | null
   expiresAt: string
   error?: string
 }
 
 const ACTIVE_TRIP_ID = 'active-trip'
+const SESSION_ID_OPTIONS = [ACTIVE_TRIP_ID, `${ACTIVE_TRIP_ID}-1`, `${ACTIVE_TRIP_ID}-2`] as const
+const SESSION_ID_KEY = 'project_x_session_id'
 const PLATFORM_API_KEY = process.env.NEXT_PUBLIC_PLATFORM_API_KEY
 
 function getPlatformApiKey(): string {
@@ -26,33 +23,79 @@ function getPlatformApiKey(): string {
   return PLATFORM_API_KEY
 }
 
-const SESSION_URL = `${API_BASE_URL}/session/${ACTIVE_TRIP_ID}`
-const SESSION_CREATE_URL = `${API_BASE_URL}/session/create`
+function getSessionUrl(sessionId: string) {
+  return `${API_BASE_URL}/session/${sessionId}`
+}
 
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text()
   return text ? JSON.parse(text) as T : {} as T
 }
 
-export async function fetchUsers() {
-  const response = await fetch('/api/users')
-  const data = await parseJson<UsersStore & { error?: string }>(response)
+export function getStoredSessionId() {
+  if (typeof window === 'undefined') {
+    return ACTIVE_TRIP_ID
+  }
+
+  const stored = window.localStorage.getItem(SESSION_ID_KEY)
+  return stored && SESSION_ID_OPTIONS.includes(stored as typeof SESSION_ID_OPTIONS[number])
+    ? stored
+    : ACTIVE_TRIP_ID
+}
+
+export function storeSessionId(sessionId: string) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(SESSION_ID_KEY, sessionId)
+}
+
+async function createSession(sessionId: string, driverPubkey: string) {
+  const response = await fetch(`${API_BASE_URL}/session/create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Project-X-Platform-Key': getPlatformApiKey(),
+    },
+    body: JSON.stringify({
+      tripId: sessionId,
+      driverPubkey,
+    }),
+  })
+  const data = await parseJson<SessionResponse & { error?: string }>(response)
 
   if (!response.ok) {
-    throw new Error(data.error || 'Failed to load users')
+    throw new Error(data.error || 'Failed to create session')
   }
 
   return data
 }
 
-export async function ensureActiveTripSession(users: UsersStore) {
-  if (!users.driver || !users.rider) {
-    throw new Error('Both driver and rider must be registered before starting the active trip')
+export async function closeSession(sessionId: string) {
+  const response = await fetch(`${API_BASE_URL}/session/close`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Project-X-Platform-Key': getPlatformApiKey(),
+    },
+    body: JSON.stringify({ sessionId }),
+  })
+  const data = await parseJson<SessionResponse & { error?: string }>(response)
+
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to close session')
   }
 
-  const sessionResponse = await fetch(SESSION_URL)
+  return data
+}
+
+export async function ensureDriverSession(sessionId: string, driverPubkey: string) {
+  const sessionResponse = await fetch(getSessionUrl(sessionId))
   if (sessionResponse.ok) {
-    return parseJson<SessionResponse>(sessionResponse)
+    const session = await parseJson<SessionResponse>(sessionResponse)
+    if (session.driverPubkey !== driverPubkey) {
+      throw new Error('session already belongs to a different driver')
+    }
+
+    return session
   }
 
   const sessionData = await parseJson<{ error?: string }>(sessionResponse)
@@ -60,25 +103,27 @@ export async function ensureActiveTripSession(users: UsersStore) {
     throw new Error(sessionData.error)
   }
 
-  const createResponse = await fetch(SESSION_CREATE_URL, {
+  return createSession(sessionId, driverPubkey)
+}
+
+export async function joinRiderSession(sessionId: string, riderPubkey: string) {
+  const response = await fetch(`${API_BASE_URL}/session/join`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Project-X-Platform-Key': getPlatformApiKey(),
     },
     body: JSON.stringify({
-      tripId: ACTIVE_TRIP_ID,
-      driverPubkey: users.driver,
-      riderPubkey: users.rider,
+      sessionId,
+      riderPubkey,
     }),
   })
-  const createData = await parseJson<SessionResponse & { error?: string }>(createResponse)
+  const data = await parseJson<SessionResponse & { error?: string }>(response)
 
-  if (!createResponse.ok) {
-    throw new Error(createData.error || 'Failed to create active trip session')
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to join session')
   }
 
-  return createData
+  return data
 }
 
-export { ACTIVE_TRIP_ID }
+export { ACTIVE_TRIP_ID, SESSION_ID_OPTIONS }

@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { io, Socket } from 'socket.io-client'
+import { getCurrentCoordinates } from '../lib/location'
 
 
 type PartyRole = 'partyA' | 'partyB'
@@ -87,11 +88,6 @@ function PartyContent() {
     })
   }
 
-  const requestVerification = () => {
-    if (!sessionId || !pubkey || !socketRef.current) return
-    socketRef.current.emit('driver:thumb', { sessionId, pubkey, role })
-  }
-
   const completeBiometric = async () => {
     if (!sessionId || !pubkey) return
 
@@ -118,9 +114,18 @@ function PartyContent() {
       const completeData = await completeRes.json()
       if (!completeRes.ok) throw new Error(completeData.error || 'Verification complete failed')
 
+      const coords = await getCurrentCoordinates()
+      socketRef.current?.emit('driver:thumb', {
+        sessionId,
+        pubkey,
+        role,
+        coords,
+        timestamp: new Date().toISOString(),
+      })
+
       setStatus('joined')
       setMessage(completeData.verified
-        ? 'Signature stored. Waiting for the other party.'
+        ? 'Biometric verified. Waiting for the other party.'
         : completeData.reason || 'Verification failed')
     } catch (error: unknown) {
       setStatus('failed')
@@ -157,9 +162,9 @@ function PartyContent() {
       )}
 
       {status === 'joined' && (
-        <button onClick={requestVerification}
+        <button onClick={completeBiometric}
           style={{ width: '100%', padding: 14, background: '#7c3aed', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-          Request Verification
+          Verify and Share Location
         </button>
       )}
 

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Keypair } from '@solana/web3.js'
-import { API_BASE_URL } from '../lib/webauthn'
+import { registerDriverWithWebAuthn } from '../lib/webauthn'
 
 const KEYPAIR_KEY = 'project_x_keypair'
 
@@ -24,7 +24,7 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Registration failed'
 }
 
-type Status = 'idle' | 'enrolling' | 'registering_bio' | 'done' | 'error'
+type Status = 'idle' | 'registering_bio' | 'done' | 'error'
 
 export default function RegisterIdentity() {
   const searchParams = useSearchParams()
@@ -40,40 +40,10 @@ export default function RegisterIdentity() {
 
   const enroll = async () => {
     try {
-      setStatus('enrolling')
+      setStatus('registering_bio')
       setError('')
 
-      // Step 1 - platform enrolls pubkey on Solana
-      const enrollRes = await fetch(`${API_BASE_URL}/enroll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subjectPubkey: pubkey })
-      })
-      const enrollData = await enrollRes.json()
-      if (!enrollRes.ok) throw new Error(enrollData.error || 'Enroll failed')
-
-      // Step 2 - WebAuthn registration
-      setStatus('registering_bio')
-      const beginRes = await fetch(`${API_BASE_URL}/webauthn/register/begin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subjectPubkey: pubkey })
-      })
-      const beginData = await beginRes.json()
-      if (!beginRes.ok) throw new Error(beginData.error || 'WebAuthn begin failed')
-
-      // Step 3 - device biometric prompt
-      const { startRegistration } = await import('@simplewebauthn/browser')
-      const regResponse = await startRegistration({ optionsJSON: beginData })
-
-      // Step 4 - complete registration
-      const completeRes = await fetch(`${API_BASE_URL}/webauthn/register/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subjectPubkey: pubkey, response: regResponse })
-      })
-      const completeData = await completeRes.json()
-      if (!completeRes.ok) throw new Error(completeData.error || 'WebAuthn complete failed')
+      await registerDriverWithWebAuthn(pubkey)
 
       if (role === 'driver' || role === 'rider') {
         const stored = localStorage.getItem(KEYPAIR_KEY)
@@ -125,15 +95,9 @@ export default function RegisterIdentity() {
             </button>
           )}
 
-          {status === 'enrolling' && (
-            <div style={{ textAlign: 'center', color: '#f0a500' }}>
-              Enrolling identity on Solana...
-            </div>
-          )}
-
           {status === 'registering_bio' && (
             <div style={{ textAlign: 'center', color: '#f0a500' }}>
-              Complete the biometric prompt...
+              Complete biometric registration. Solana enrollment happens only after this succeeds.
             </div>
           )}
 

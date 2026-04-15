@@ -5,7 +5,7 @@ pub mod error;
 pub mod state;
 
 use error::ProjectXError;
-use state::Credential;
+use state::{Credential, ProximityAttestation};
 
 declare_id!("8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy");
 
@@ -27,7 +27,20 @@ pub struct Enroll<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(session_id_hash: [u8; 32], attestation_nonce: u64)]
 pub struct Verify<'info> {
+    #[account(
+        mut,
+        close = verifier,
+        seeds = [
+            b"proximity",
+            owner.key().as_ref(),
+            rider.key().as_ref(),
+            &attestation_nonce.to_le_bytes(),
+        ],
+        bump = proximity_attestation.bump,
+    )]
+    pub proximity_attestation: Account<'info, ProximityAttestation>,
     #[account(
         seeds = [b"credential", owner.key().as_ref()],
         bump = credential.bump,
@@ -35,7 +48,35 @@ pub struct Verify<'info> {
     pub credential: Account<'info, Credential>,
     /// CHECK: checking pubkey matches
     pub owner: UncheckedAccount<'info>,
+    /// CHECK: checking pubkey matches
+    pub rider: UncheckedAccount<'info>,
+    #[account(mut)]
     pub verifier: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(session_id_hash: [u8; 32], attestation_nonce: u64)]
+pub struct AttestProximity<'info> {
+    #[account(
+        init,
+        payer = platform,
+        space = ProximityAttestation::LEN,
+        seeds = [
+            b"proximity",
+            owner.key().as_ref(),
+            rider.key().as_ref(),
+            &attestation_nonce.to_le_bytes(),
+        ],
+        bump
+    )]
+    pub proximity_attestation: Account<'info, ProximityAttestation>,
+    /// CHECK: storing pubkey only
+    pub owner: UncheckedAccount<'info>,
+    /// CHECK: storing pubkey only
+    pub rider: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub platform: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -80,11 +121,45 @@ pub mod project_x_program {
         Ok(())
     }
 
-    pub fn verify(ctx: Context<Verify>, proximity_verified: bool) -> Result<()> {
+    pub fn attest_proximity(
+        ctx: Context<AttestProximity>,
+        session_id_hash: [u8; 32],
+        attestation_nonce: u64,
+        expires_at: i64,
+    ) -> Result<()> {
+        let issued_at = Clock::get()?.unix_timestamp;
+        require!(expires_at > issued_at, ProjectXError::InvalidAttestationExpiry);
+
+        let proximity_attestation = &mut ctx.accounts.proximity_attestation;
+        proximity_attestation.owner = ctx.accounts.owner.key();
+        proximity_attestation.rider = ctx.accounts.rider.key();
+        proximity_attestation.platform = ctx.accounts.platform.key();
+        proximity_attestation.session_id_hash = session_id_hash;
+        proximity_attestation.issued_at = issued_at;
+        proximity_attestation.expires_at = expires_at;
+        proximity_attestation.attestation_nonce = attestation_nonce;
+        proximity_attestation.bump = ctx.bumps.proximity_attestation;
+        Ok(())
+    }
+
+    pub fn verify(
+        ctx: Context<Verify>,
+        session_id_hash: [u8; 32],
+        attestation_nonce: u64,
+    ) -> Result<()> {
         let credential = &ctx.accounts.credential;
+        let proximity_attestation = &ctx.accounts.proximity_attestation;
+        let now = Clock::get()?.unix_timestamp;
+
         require!(credential.is_active, ProjectXError::CredentialInactive);
-        require!(proximity_verified, ProjectXError::ProximityCheckFailed);
         require!(credential.owner == ctx.accounts.owner.key(), ProjectXError::OwnerMismatch);
+        require!(proximity_attestation.owner == ctx.accounts.owner.key(), ProjectXError::InvalidProximityAttestation);
+        require!(proximity_attestation.rider == ctx.accounts.rider.key(), ProjectXError::RiderMismatch);
+        require!(proximity_attestation.platform == ctx.accounts.verifier.key(), ProjectXError::UnauthorizedPlatform);
+        require!(proximity_attestation.platform == credential.platform, ProjectXError::UnauthorizedPlatform);
+        require!(proximity_attestation.session_id_hash == session_id_hash, ProjectXError::SessionMismatch);
+        require!(proximity_attestation.attestation_nonce == attestation_nonce, ProjectXError::InvalidProximityAttestation);
+        require!(proximity_attestation.expires_at >= now, ProjectXError::ProximityAttestationExpired);
         msg!("✅ Identity verified for {}", credential.owner);
         Ok(())
     }

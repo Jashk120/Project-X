@@ -17,17 +17,33 @@ export async function createHandler(
 ) {
   try {
     assertPlatformApiKey(req);
-    const { tripId, driverPubkey, riderPubkey } = req.body as {
+    const { tripId, driverPubkey } = req.body as {
       tripId: string;
       driverPubkey: string;
-      riderPubkey: string;
     };
 
-    const result = service.createSession({ tripId, driverPubkey, riderPubkey });
+    const result = await service.createSession({ tripId, driverPubkey });
     return reply.code(200).send(result);
   } catch (err: any) {
     const code = err.message === "invalid platform api key" ? 401 : 400;
     return reply.code(code).send({ error: err.message });
+  }
+}
+
+export async function joinHandler(
+  req: FastifyRequest,
+  reply: FastifyReply,
+) {
+  try {
+    const { sessionId, riderPubkey } = req.body as {
+      sessionId: string;
+      riderPubkey: string;
+    };
+
+    const result = await service.joinSessionAsRider(sessionId, riderPubkey);
+    return reply.code(200).send(result);
+  } catch (err: any) {
+    return reply.code(400).send({ error: err.message });
   }
 }
 
@@ -37,7 +53,7 @@ export async function getHandler(
 ) {
   try {
     const { sessionId } = req.params as { sessionId: string };
-    const result = service.getSession(sessionId);
+    const result = await service.getSession(sessionId);
     return reply.code(200).send(result);
   } catch (err: any) {
     return reply.code(400).send({ error: err.message });
@@ -51,7 +67,7 @@ export async function closeHandler(
   try {
     assertPlatformApiKey(req);
     const { sessionId } = req.body as { sessionId: string };
-    const result = service.closeSession(sessionId);
+    const result = await service.closeSession(sessionId);
     return reply.code(200).send(result);
   } catch (err: any) {
     const code = err.message === "invalid platform api key" ? 401 : 400;

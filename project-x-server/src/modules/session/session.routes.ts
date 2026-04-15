@@ -15,16 +15,32 @@ export async function sessionRoutes(app: FastifyInstance) {
         },
         body: {
           type: "object",
-          required: ["tripId", "driverPubkey", "riderPubkey"],
+          required: ["tripId", "driverPubkey"],
           properties: {
             tripId: { type: "string" },
             driverPubkey: { type: "string" },
-            riderPubkey: { type: "string" },
           },
         },
       },
     },
     controller.createHandler,
+  );
+
+  app.post(
+    "/session/join",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["sessionId", "riderPubkey"],
+          properties: {
+            sessionId: { type: "string" },
+            riderPubkey: { type: "string" },
+          },
+        },
+      },
+    },
+    controller.joinHandler,
   );
 
   app.get(
