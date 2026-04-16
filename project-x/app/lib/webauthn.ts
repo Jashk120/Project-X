@@ -135,9 +135,6 @@ export async function registerDriverWithWebAuthn(subjectPubkey: string) {
   return completeData as {
     credentialId: string
     credentialHash: string
-    enroll: {
-      credentialPda: string
-    }
   }
 }
 

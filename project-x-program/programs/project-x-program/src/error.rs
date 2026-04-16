@@ -8,14 +8,14 @@ pub enum ProjectXError {
     #[msg("Proximity attestation expired")]
     ProximityAttestationExpired,
 
-    #[msg("Owner does not match credential")]
-    OwnerMismatch,
+    #[msg("Party A does not match credential owner")]
+    PartyAMismatch,
 
     #[msg("Only the enrolling platform can revoke this credential")]
     UnauthorizedPlatform,
 
-    #[msg("Rider does not match proximity attestation")]
-    RiderMismatch,
+    #[msg("Party B does not match proximity attestation")]
+    PartyBMismatch,
 
     #[msg("Invalid proximity attestation")]
     InvalidProximityAttestation,

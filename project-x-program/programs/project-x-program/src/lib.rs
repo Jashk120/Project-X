@@ -19,8 +19,7 @@ pub struct Enroll<'info> {
         bump
     )]
     pub credential: Account<'info, Credential>,
-    /// CHECK: storing pubkey only
-    pub owner: UncheckedAccount<'info>,
+    pub owner: Signer<'info>,
     #[account(mut)]
     pub platform: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -34,22 +33,20 @@ pub struct Verify<'info> {
         close = verifier,
         seeds = [
             b"proximity",
-            owner.key().as_ref(),
-            rider.key().as_ref(),
+            party_a.key().as_ref(),
+            party_b.key().as_ref(),
             &attestation_nonce.to_le_bytes(),
         ],
         bump = proximity_attestation.bump,
     )]
     pub proximity_attestation: Account<'info, ProximityAttestation>,
     #[account(
-        seeds = [b"credential", owner.key().as_ref()],
+        seeds = [b"credential", party_a.key().as_ref()],
         bump = credential.bump,
     )]
     pub credential: Account<'info, Credential>,
-    /// CHECK: checking pubkey matches
-    pub owner: UncheckedAccount<'info>,
-    /// CHECK: checking pubkey matches
-    pub rider: UncheckedAccount<'info>,
+    pub party_a: Signer<'info>,
+    pub party_b: Signer<'info>,
     #[account(mut)]
     pub verifier: Signer<'info>,
 }
@@ -63,17 +60,17 @@ pub struct AttestProximity<'info> {
         space = ProximityAttestation::LEN,
         seeds = [
             b"proximity",
-            owner.key().as_ref(),
-            rider.key().as_ref(),
+            party_a.key().as_ref(),
+            party_b.key().as_ref(),
             &attestation_nonce.to_le_bytes(),
         ],
         bump
     )]
     pub proximity_attestation: Account<'info, ProximityAttestation>,
     /// CHECK: storing pubkey only
-    pub owner: UncheckedAccount<'info>,
+    pub party_a: UncheckedAccount<'info>,
     /// CHECK: storing pubkey only
-    pub rider: UncheckedAccount<'info>,
+    pub party_b: UncheckedAccount<'info>,
     #[account(mut)]
     pub platform: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -131,8 +128,8 @@ pub mod project_x_program {
         require!(expires_at > issued_at, ProjectXError::InvalidAttestationExpiry);
 
         let proximity_attestation = &mut ctx.accounts.proximity_attestation;
-        proximity_attestation.owner = ctx.accounts.owner.key();
-        proximity_attestation.rider = ctx.accounts.rider.key();
+        proximity_attestation.party_a = ctx.accounts.party_a.key();
+        proximity_attestation.party_b = ctx.accounts.party_b.key();
         proximity_attestation.platform = ctx.accounts.platform.key();
         proximity_attestation.session_id_hash = session_id_hash;
         proximity_attestation.issued_at = issued_at;
@@ -152,9 +149,9 @@ pub mod project_x_program {
         let now = Clock::get()?.unix_timestamp;
 
         require!(credential.is_active, ProjectXError::CredentialInactive);
-        require!(credential.owner == ctx.accounts.owner.key(), ProjectXError::OwnerMismatch);
-        require!(proximity_attestation.owner == ctx.accounts.owner.key(), ProjectXError::InvalidProximityAttestation);
-        require!(proximity_attestation.rider == ctx.accounts.rider.key(), ProjectXError::RiderMismatch);
+        require!(credential.owner == ctx.accounts.party_a.key(), ProjectXError::PartyAMismatch);
+        require!(proximity_attestation.party_a == ctx.accounts.party_a.key(), ProjectXError::InvalidProximityAttestation);
+        require!(proximity_attestation.party_b == ctx.accounts.party_b.key(), ProjectXError::PartyBMismatch);
         require!(proximity_attestation.platform == ctx.accounts.verifier.key(), ProjectXError::UnauthorizedPlatform);
         require!(proximity_attestation.platform == credential.platform, ProjectXError::UnauthorizedPlatform);
         require!(proximity_attestation.session_id_hash == session_id_hash, ProjectXError::SessionMismatch);

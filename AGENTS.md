@@ -26,18 +26,19 @@ Current end-to-end demo flow:
 
 1. A browser-local keypair is generated or reused from `localStorage['project_x_keypair']`.
 2. WebAuthn registration completes through the backend.
-3. Backend registration completion stores the WebAuthn credential and enrolls the subject on Solana.
-4. Driver creates or reuses a backend session.
-5. Rider joins that session.
-6. Driver completes WebAuthn authentication and shares location.
-7. Rider auto-starts WebAuthn authentication when `partyA` begins verification and then shares location.
-8. Backend checks both WebAuthn signatures, validates GPS proximity, writes a proximity attestation on Solana if needed, and then executes on-chain verify.
+3. Backend registration completion stores the WebAuthn credential and returns the credential hash.
+4. Frontend requests `POST /enroll/prepare`, signs the prepared transaction with the browser-local keypair, and submits it through `POST /enroll/submit`.
+5. Driver creates or reuses a backend session.
+6. Rider joins that session.
+7. Driver completes WebAuthn authentication and shares location.
+8. Rider auto-starts WebAuthn authentication when `partyA` begins verification and then shares location.
+9. Backend checks both WebAuthn signatures, validates GPS proximity, writes a proximity attestation on Solana if needed, prepares one canonical `verify` transaction, sends the same serialized message to both parties, collects both signatures, verifies that the submitted message bytes exactly match the prepared message bytes, adds the verifier signature, and then submits on-chain verify.
 
 ## Current Working State
 
 What is confirmed working now:
 
-- WebAuthn registration and on-chain enrollment succeed through the backend-driven registration completion path.
+- WebAuthn registration succeeds and enrollment now uses client-side signing through `enroll/prepare` and `enroll/submit`.
 - Driver and rider can use the same selected session id from the frontend preset list:
   - `active-trip`
   - `active-trip-1`
@@ -46,14 +47,19 @@ What is confirmed working now:
 - WebAuthn credentials and challenges are stored in PostgreSQL.
 - Proximity attestations are stored in PostgreSQL and consumed by backend/on-chain verification.
 - The backend socket room refresh now pulls `partyA` and `partyB` pubkeys from the latest session record on join, so stale in-memory `partyB` state no longer causes false mismatch errors.
+- Verify now uses a canonical shared transaction message for both parties instead of backend-only submission.
+- Backend countersigning now checks submitted `serializeMessage()` bytes against the prepared canonical message bytes before merging signatures.
 - Anchor program tests currently pass.
 - Backend TypeScript typecheck currently passes.
+- Frontend TypeScript compile currently passes.
 
 Important current caveats:
 
 - The frontend still uses a single browser-local identity source, `project_x_keypair`, across register, driver, rider, and party flows.
-- If driver and rider are run in the same browser profile, they become the same identity.
+- If driver and rider are run in the same browser profile, they become the same identity and rider session join should fail with `rider pubkey cannot be the same as driver`.
 - The Next-side `/api/users` store still exists, but the current driver/rider flow no longer depends on it for active session setup.
+- Prepared enroll/verify transactions are currently stored in memory on the backend for the demo. A backend restart drops outstanding prepare records.
+- Verify prepare expiry currently fails the verification attempt and requires both parties to sign again. There is no resume flow yet.
 - Frontend lint is currently failing because of a React hooks rule violation in `app/providers.tsx`.
 
 ## Project Map
@@ -94,7 +100,13 @@ Important files:
 - Defines `API_BASE_URL`.
 - Default fallback is `'/api/v1'`.
 - Provides the WebAuthn registration helper used by `/register`.
-- Registration completion is the intended place where on-chain enrollment happens.
+- Registration completion returns the credential hash used by the follow-up enroll prepare/sign/submit flow.
+
+`/home/curator/solana/project-x/app/lib/project-x-keypair.ts`
+
+- Shared browser-local key handling for Project X.
+- Loads `project_x_keypair` from local storage.
+- Signs prepared serialized Solana transactions for enroll and verify.
 
 `/home/curator/solana/project-x/app/lib/active-session.ts`
 
@@ -127,7 +139,8 @@ Important files:
 
 - Generates or reuses `localStorage['project_x_keypair']`.
 - Reads `?role=driver|rider`.
-- Calls the WebAuthn registration helper and only enrolls on-chain after biometric registration succeeds.
+- Calls the WebAuthn registration helper.
+- Requests `POST /enroll/prepare`, signs the prepared transaction locally, and submits it through `POST /enroll/submit`.
 - Writes the selected role/pubkey into `/api/users` after successful registration.
 - Redirects:
   - rider role -> `/rider`
@@ -148,6 +161,7 @@ Important files:
 - Ensures the selected session exists as `partyA`.
 - Joins Socket.IO as `partyA`.
 - Runs WebAuthn verification and then emits `driver:thumb` with GPS coordinates.
+- Signs the canonical prepared verify transaction when the backend emits `verify:prepare`.
 - Supports choosing among preset session ids and resetting the session.
 
 `/home/curator/solana/project-x/app/rider/page.tsx`
@@ -157,6 +171,7 @@ Important files:
 - Joins Socket.IO as `partyB`.
 - Auto-starts WebAuthn verification when receiving `driver:verifying` from `partyA`.
 - Emits `driver:thumb` as `partyB` with GPS coordinates after successful verification.
+- Signs the canonical prepared verify transaction when the backend emits `verify:prepare`.
 
 `/home/curator/solana/project-x/app/party/page.tsx`
 
@@ -245,6 +260,8 @@ Important files:
 
 - Declares:
   - `POST /enroll`
+  - `POST /enroll/prepare`
+  - `POST /enroll/submit`
   - `POST /verify`
   - `POST /revoke`
   - `GET /status`
@@ -254,11 +271,15 @@ Important files:
 
 - Derives:
   - credential PDA from `["credential", owner]`
-  - proximity PDA from `["proximity", owner, rider, nonce]`
-- Sends Anchor transactions using the server-held platform keypair.
+  - proximity PDA from `["proximity", partyA, partyB, nonce]`
+- Prepares enroll and verify transactions for client signing.
+- Stores short-lived prepare records in memory for the demo.
+- Verifies submitted transaction message bytes against the canonical prepared `serializeMessage()` bytes before countersigning.
 - Exposes:
-  - `enroll(subjectPubkey, credentialHash?)`
-  - `verify(subjectPubkey, riderPubkey, sessionId)`
+  - `prepareEnroll(subjectPubkey, credentialHashHex)`
+  - `submitEnroll(prepareId, signedTransaction)`
+  - `prepareVerify(subjectPubkey, riderPubkey, sessionId)`
+  - `submitVerifySignature(prepareId, signerPubkey, signedTransaction)`
   - `revoke(subjectPubkey)`
   - `status(subjectPubkey)`
   - `close(subjectPubkey)`
@@ -267,7 +288,8 @@ Important files:
 
 - Handles WebAuthn registration and authentication.
 - Stores WebAuthn credentials and challenges in PostgreSQL.
-- Registration completion performs backend enrollment on Solana.
+- Registration completion no longer submits the Solana enroll transaction directly.
+- Registration completion returns the credential hash used by the client-side enroll signing flow.
 - Verification completion stores session signatures for `partyA` / `partyB`.
 
 `/home/curator/solana/project-x-server/src/modules/session/session.routes.ts`
@@ -304,12 +326,14 @@ Important files:
 - Handles:
   - `join`
   - `driver:thumb`
+  - `verify:signed`
 - Validates the joining pubkey against the persisted session record.
 - Maintains in-memory room state.
 - Refreshes `partyA` and `partyB` from the current session on join to avoid stale rider state.
 - Emits:
   - `party:connected`
   - `driver:verifying`
+  - `verify:prepare`
   - `verify:result`
   - `session:error`
 
@@ -319,6 +343,7 @@ Operational notes:
 - CORS and Socket.IO origin checks are open for development.
 - Live room membership is still in-memory only and disappears on server restart.
 - PostgreSQL is now authoritative for session and WebAuthn persistence.
+- Prepared enroll and verify transaction records are in-memory only for the demo and disappear on server restart.
 
 ### Anchor Program: `/home/curator/solana/project-x-program`
 
@@ -429,6 +454,8 @@ Specific current pitfalls:
   - `credential not found`
   - `partyA pubkey does not match session`
   - `partyB pubkey does not match session`
+- A verify prepare can expire before both parties sign:
+  - `verification request expired; both parties must sign again`
 - Driver and rider using the same browser profile still share `project_x_keypair`.
 - The generic `/party` page is not fully aligned with the current session/WebAuthn flow and can fail in ways the dedicated driver/rider pages do not.
 

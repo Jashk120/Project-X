@@ -2,7 +2,7 @@ import { Server, Socket } from 'socket.io'
 import { getSession } from '../db/store'
 import { areBothSigned } from '../modules/session/session.service'
 import { attestProximity } from '../modules/proximity/proximity.service'
-import { verify } from '../modules/solana/solana.service'
+import { prepareVerify, submitVerifySignature } from '../modules/solana/solana.service'
 
 type PartyRole = 'partyA' | 'partyB'
 
@@ -32,6 +32,7 @@ type RoomState = {
   hasPartyB: boolean
   latestThumbs: Partial<Record<PartyRole, ThumbPayload>>
   verificationInFlight?: boolean
+  verifyPrepareId?: string | null
 }
 
 export const roomState = new Map<string, RoomState>()
@@ -100,6 +101,7 @@ export function registerSocketHandlers(io: Server) {
         hasPartyA: false,
         hasPartyB: false,
         latestThumbs: {},
+        verifyPrepareId: null,
       }
 
       // Refresh expected identities from the durable session record so a driver who
@@ -189,11 +191,35 @@ export function registerSocketHandlers(io: Server) {
           throw new Error('session rider missing')
         }
 
-        await verify(state.partyA, state.partyB, sessionId)
-        emitVerifyResult(io, sessionId, state.partyA, {
-          verified: true,
-          reason: 'verified',
+        const preparedVerify = await prepareVerify(state.partyA, state.partyB, sessionId)
+        state.verifyPrepareId = preparedVerify.prepareId
+        roomState.set(sessionId, state)
+        io.to(sessionId).emit('verify:prepare', {
+          prepareId: preparedVerify.prepareId,
+          transaction: preparedVerify.transaction,
+          expiresAt: preparedVerify.expiresAt,
+          partyAPubkey: preparedVerify.partyAPubkey,
+          partyBPubkey: preparedVerify.partyBPubkey,
         })
+
+        const expiryDelayMs = Math.max(
+          0,
+          new Date(preparedVerify.expiresAt).getTime() - Date.now(),
+        )
+        setTimeout(() => {
+          const latestState = roomState.get(sessionId)
+          if (!latestState || latestState.verifyPrepareId !== preparedVerify.prepareId) {
+            return
+          }
+
+          latestState.verifyPrepareId = null
+          latestState.verificationInFlight = false
+          roomState.set(sessionId, latestState)
+          emitVerifyResult(io, sessionId, latestState.partyA, {
+            verified: false,
+            reason: 'verification request expired; both parties must sign again',
+          })
+        }, expiryDelayMs)
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'verification failed'
         emitVerifyResult(io, sessionId, state.partyA, {
@@ -201,8 +227,54 @@ export function registerSocketHandlers(io: Server) {
           reason,
         })
       } finally {
+        if (!state.verifyPrepareId) {
+          state.verificationInFlight = false
+          roomState.set(sessionId, state)
+        }
+      }
+    })
+
+    socket.on('verify:signed', async ({
+      prepareId,
+      pubkey,
+      signedTransaction,
+    }: {
+      prepareId: string
+      pubkey: string
+      signedTransaction: string
+    }) => {
+      const sessionId = socket.data.roomId
+      if (!sessionId) {
+        socket.emit('session:error', { error: 'session room not found' })
+        return
+      }
+
+      const state = roomState.get(sessionId)
+      if (!state || state.verifyPrepareId !== prepareId) {
+        socket.emit('session:error', { error: 'verification request not found or expired' })
+        return
+      }
+
+      try {
+        const result = await submitVerifySignature(prepareId, pubkey, signedTransaction)
+        if (result.status === 'submitted') {
+          state.verifyPrepareId = null
+          state.verificationInFlight = false
+          roomState.set(sessionId, state)
+          emitVerifyResult(io, sessionId, state.partyA, {
+            verified: true,
+            reason: 'verified',
+          })
+        }
+      } catch (error) {
+        state.verifyPrepareId = null
         state.verificationInFlight = false
         roomState.set(sessionId, state)
+        const reason = error instanceof Error ? error.message : 'verification failed'
+        emitVerifyResult(io, sessionId, state.partyA, {
+          verified: false,
+          reason,
+        })
       }
     })
 

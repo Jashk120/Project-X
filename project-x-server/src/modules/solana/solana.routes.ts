@@ -14,6 +14,32 @@ export async function solanaRoutes(app: FastifyInstance) {
     },
   }, controller.enroll);
 
+  app.post("/enroll/prepare", {
+    schema: {
+      body: {
+        type: "object",
+        required: ["subjectPubkey", "credentialHash"],
+        properties: {
+          subjectPubkey: { type: "string" },
+          credentialHash: { type: "string" },
+        },
+      },
+    },
+  }, controller.prepareEnroll);
+
+  app.post("/enroll/submit", {
+    schema: {
+      body: {
+        type: "object",
+        required: ["prepareId", "signedTransaction"],
+        properties: {
+          prepareId: { type: "string" },
+          signedTransaction: { type: "string" },
+        },
+      },
+    },
+  }, controller.submitEnroll);
+
   app.post("/verify", {
     schema: {
       body: {

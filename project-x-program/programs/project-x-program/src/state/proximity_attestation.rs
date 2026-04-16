@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 
 #[account]
 pub struct ProximityAttestation {
-    pub owner: Pubkey,
-    pub rider: Pubkey,
+    pub party_a: Pubkey,
+    pub party_b: Pubkey,
     pub platform: Pubkey,
     pub session_id_hash: [u8; 32],
     pub issued_at: i64,

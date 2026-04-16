@@ -2,9 +2,31 @@ import { FastifyRequest, FastifyReply } from "fastify";
 import * as service from "./solana.service";
 
 export async function enroll(req: FastifyRequest, reply: FastifyReply) {
+  return reply.code(400).send({
+    error: "direct enroll is no longer supported; use /enroll/prepare and /enroll/submit",
+  });
+}
+
+export async function prepareEnroll(req: FastifyRequest, reply: FastifyReply) {
   try {
-    const { subjectPubkey } = req.body as { subjectPubkey: string };
-    const result = await service.enroll(subjectPubkey);
+    const { subjectPubkey, credentialHash } = req.body as {
+      subjectPubkey: string;
+      credentialHash: string;
+    };
+    const result = await service.prepareEnroll(subjectPubkey, credentialHash);
+    return reply.code(200).send(result);
+  } catch (err: any) {
+    return reply.code(400).send({ error: err.message });
+  }
+}
+
+export async function submitEnroll(req: FastifyRequest, reply: FastifyReply) {
+  try {
+    const { prepareId, signedTransaction } = req.body as {
+      prepareId: string;
+      signedTransaction: string;
+    };
+    const result = await service.submitEnroll(prepareId, signedTransaction);
     return reply.code(200).send(result);
   } catch (err: any) {
     return reply.code(400).send({ error: err.message });
@@ -12,20 +34,9 @@ export async function enroll(req: FastifyRequest, reply: FastifyReply) {
 }
 
 export async function verify(req: FastifyRequest, reply: FastifyReply) {
-  try {
-    const { subjectPubkey, riderPubkey, sessionId } = req.body as {
-      subjectPubkey: string;
-      riderPubkey?: string;
-      sessionId?: string;
-    };
-    const result = await service.verify(subjectPubkey, riderPubkey, sessionId);
-    return reply.code(200).send(result);
-  } catch (err: any) {
-    // surface Anchor errors cleanly
-    const isInactive = err?.message?.includes("CredentialInactive");
-    const code = isInactive ? 403 : 400;
-    return reply.code(code).send({ error: err.message });
-  }
+  return reply.code(400).send({
+    error: "direct verify is no longer supported; use the socket verification flow",
+  });
 }
 
 export async function revoke(req: FastifyRequest, reply: FastifyReply) {

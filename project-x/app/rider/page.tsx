@@ -10,6 +10,7 @@ import {
   storeSessionId,
 } from '../lib/active-session'
 import { API_BASE_URL } from '../lib/webauthn'
+import { signSerializedTransaction } from '../lib/project-x-keypair'
 import { getCurrentCoordinates } from '../lib/location'
 
 type VerifyStatus = 'idle' | 'connecting' | 'waiting' | 'verifying' | 'verified' | 'failed' | 'revoked' | 'disconnected'
@@ -174,6 +175,34 @@ function RiderContent() {
     socket.on('driver:verifying', ({ role }: { role?: string }) => {
       if (role !== 'partyA') return
       void verifyIdentity()
+    })
+
+    socket.on('verify:prepare', async ({
+      prepareId,
+      transaction,
+      partyAPubkey,
+      partyBPubkey,
+    }: {
+      prepareId: string
+      transaction: string
+      partyAPubkey: string
+      partyBPubkey: string
+    }) => {
+      if (riderPubkey !== partyAPubkey && riderPubkey !== partyBPubkey) {
+        return
+      }
+
+      try {
+        const signedTransaction = signSerializedTransaction(transaction)
+        socket.emit('verify:signed', {
+          prepareId,
+          pubkey: riderPubkey,
+          signedTransaction,
+        })
+      } catch (error: unknown) {
+        setStatus('failed')
+        setErrorDetail(getVerificationErrorMessage(error))
+      }
     })
 
     socket.on('verify:result', ({ verified, reason }: { verified: boolean, reason?: string }) => {

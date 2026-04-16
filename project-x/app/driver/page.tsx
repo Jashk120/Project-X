@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { API_BASE_URL } from '../lib/webauthn'
+import { signSerializedTransaction } from '../lib/project-x-keypair'
 import {
   ACTIVE_TRIP_ID,
   SESSION_ID_OPTIONS,
@@ -162,6 +163,34 @@ export default function DriverPage() {
     socket.on('verify:result', ({ verified, reason }: { verified: boolean, reason?: string }) => {
       setVerifyResult({ verified, reason })
       setSessionStatus(verified ? 'verified' : 'failed')
+    })
+
+    socket.on('verify:prepare', async ({
+      prepareId,
+      transaction,
+      partyAPubkey,
+      partyBPubkey,
+    }: {
+      prepareId: string
+      transaction: string
+      partyAPubkey: string
+      partyBPubkey: string
+    }) => {
+      if (pubkey !== partyAPubkey && pubkey !== partyBPubkey) {
+        return
+      }
+
+      try {
+        const signedTransaction = signSerializedTransaction(transaction)
+        socket.emit('verify:signed', {
+          prepareId,
+          pubkey,
+          signedTransaction,
+        })
+      } catch (error: unknown) {
+        setVerifyResult({ verified: false, reason: normalizeVerificationError(error) })
+        setSessionStatus('failed')
+      }
     })
 
     socket.on('session:error', ({ error }: { error: string }) => {

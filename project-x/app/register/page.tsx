@@ -3,12 +3,11 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Keypair } from '@solana/web3.js'
-import { registerDriverWithWebAuthn } from '../lib/webauthn'
-
-const KEYPAIR_KEY = 'project_x_keypair'
+import { API_BASE_URL, registerDriverWithWebAuthn } from '../lib/webauthn'
+import { PROJECT_X_KEYPAIR_KEY, signSerializedTransaction } from '../lib/project-x-keypair'
 
 function getOrCreateKeypair(): { pubkey: string, secretKey: number[] } {
-  const stored = localStorage.getItem(KEYPAIR_KEY)
+  const stored = localStorage.getItem(PROJECT_X_KEYPAIR_KEY)
   if (stored) return JSON.parse(stored)
 
   const keypair = Keypair.generate()
@@ -16,7 +15,7 @@ function getOrCreateKeypair(): { pubkey: string, secretKey: number[] } {
     pubkey: keypair.publicKey.toBase58(),
     secretKey: Array.from(keypair.secretKey)
   }
-  localStorage.setItem(KEYPAIR_KEY, JSON.stringify(data))
+  localStorage.setItem(PROJECT_X_KEYPAIR_KEY, JSON.stringify(data))
   return data
 }
 
@@ -43,10 +42,32 @@ export default function RegisterIdentity() {
       setStatus('registering_bio')
       setError('')
 
-      await registerDriverWithWebAuthn(pubkey)
+      const registration = await registerDriverWithWebAuthn(pubkey)
+      const prepareRes = await fetch(`${API_BASE_URL}/enroll/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subjectPubkey: pubkey,
+          credentialHash: registration.credentialHash,
+        }),
+      })
+      const prepareData = await prepareRes.json()
+      if (!prepareRes.ok) throw new Error(prepareData.error || 'Unable to prepare enrollment transaction')
+
+      const signedTransaction = signSerializedTransaction(prepareData.transaction)
+      const submitRes = await fetch(`${API_BASE_URL}/enroll/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prepareId: prepareData.prepareId,
+          signedTransaction,
+        }),
+      })
+      const submitData = await submitRes.json()
+      if (!submitRes.ok) throw new Error(submitData.error || 'Unable to submit enrollment transaction')
 
       if (role === 'driver' || role === 'rider') {
-        const stored = localStorage.getItem(KEYPAIR_KEY)
+        const stored = localStorage.getItem(PROJECT_X_KEYPAIR_KEY)
         if (!stored) throw new Error('Registered identity missing from local storage')
 
         const parsed = JSON.parse(stored) as { pubkey?: string }

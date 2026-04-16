@@ -9,7 +9,7 @@ import {
 } from "@simplewebauthn/server";
 import { createHash } from "crypto";
 import { env } from "../../config/env";
-import { enroll, parsePublicKey } from "../solana/solana.service";
+import { parsePublicKey } from "../solana/solana.service";
 import * as store from "../../db/store";
 import { getIo } from "../../socket/socket.instance";
 import { storeSignature } from "../session/session.service";
@@ -135,16 +135,6 @@ export async function completeRegistration(
     .update(decodeBase64Url(response.rawId))
     .digest();
 
-  let enrollResult
-  try {
-    enrollResult = await enroll(ownerKey.toBase58(), credentialHash)
-  } catch (e: any) {
-    if (e?.message?.includes('already in use')) {
-      enrollResult = { skipped: true, reason: 'already enrolled on Solana' }
-    } else {
-      throw e
-    }
-  }
   await store.markChallengeUsed(ownerKey.toBase58(), "registration");
 
   await store.saveCredential(ownerKey.toBase58(), {
@@ -165,7 +155,6 @@ export async function completeRegistration(
       deviceType: credentialDeviceType,
       backedUp: credentialBackedUp,
     },
-    enroll: enrollResult,
   };
 }
 
