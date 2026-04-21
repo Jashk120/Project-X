@@ -16,8 +16,23 @@ export const sessions = coordinationSchema.table(
     tripId: text("trip_id").notNull(),
     driverPubkey: text("driver_pubkey").notNull(),
     riderPubkey: text("rider_pubkey"),
+    joinToken: text("join_token"),
+    joinTokenExpiresAt: timestamp("join_token_expires_at", {
+      withTimezone: true,
+    }),
     partyASignature: text("party_a_signature"),
     partyBSignature: text("party_b_signature"),
+    blePresenceChallenge: text("ble_presence_challenge"),
+    blePresenceChallengeExpiresAt: timestamp("ble_presence_challenge_expires_at", {
+      withTimezone: true,
+    }),
+    blePresenceChallengeUsedAt: timestamp("ble_presence_challenge_used_at", {
+      withTimezone: true,
+    }),
+    blePresenceConfirmedAt: timestamp("ble_presence_confirmed_at", {
+      withTimezone: true,
+    }),
+    blePresenceConfirmedByPubkey: text("ble_presence_confirmed_by_pubkey"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -28,6 +43,7 @@ export const sessions = coordinationSchema.table(
   (table) => [
     index("sessions_driver_pubkey_idx").on(table.driverPubkey),
     index("sessions_rider_pubkey_idx").on(table.riderPubkey),
+    index("sessions_join_token_idx").on(table.joinToken),
     index("sessions_expires_at_idx").on(table.expiresAt),
   ],
 );

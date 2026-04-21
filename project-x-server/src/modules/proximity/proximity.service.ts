@@ -3,7 +3,7 @@ import * as store from "../../db/store";
 import { getSession } from "../session/session.service";
 
 const MAX_TIME_DELTA_MS = 30_000;
-const DISTANCE_THRESHOLD_METERS = 50;
+const DISTANCE_THRESHOLD_METERS = 200;
 const MAX_ACCURACY_METERS = 50;
 const MAX_SERVER_RECEIVE_DELTA_MS = 30_000;
 const ATTESTATION_TTL_MS = 60_000;

@@ -20,18 +20,53 @@ function ensureRow<T>(row: T | undefined, message: string): T {
   return row;
 }
 
+function omitUndefined<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as Partial<T>;
+}
+
+function normalizeSessionPatch(data: Partial<NewSession>) {
+  return omitUndefined({
+    tripId: data.tripId,
+    driverPubkey: data.driverPubkey,
+    riderPubkey: data.riderPubkey,
+    joinToken: data.joinToken,
+    joinTokenExpiresAt: data.joinTokenExpiresAt,
+    partyASignature: data.partyASignature,
+    partyBSignature: data.partyBSignature,
+    blePresenceChallenge: data.blePresenceChallenge,
+    blePresenceChallengeExpiresAt: data.blePresenceChallengeExpiresAt,
+    blePresenceChallengeUsedAt: data.blePresenceChallengeUsedAt,
+    blePresenceConfirmedAt: data.blePresenceConfirmedAt,
+    blePresenceConfirmedByPubkey: data.blePresenceConfirmedByPubkey,
+    createdAt: data.createdAt,
+    expiresAt: data.expiresAt,
+    completedAt: data.completedAt,
+  });
+}
+
 function mapSession(row: typeof sessions.$inferSelect) {
   return {
     sessionId: row.sessionId,
     tripId: row.tripId,
     driverPubkey: row.driverPubkey,
     riderPubkey: row.riderPubkey,
+    joinToken: row.joinToken,
+    joinTokenExpiresAt: row.joinTokenExpiresAt?.toISOString(),
     createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt.toISOString(),
     completedAt: row.completedAt?.toISOString(),
     signatures: {
       partyA: row.partyASignature,
       partyB: row.partyBSignature,
+    },
+    presence: {
+      challenge: row.blePresenceChallenge,
+      challengeExpiresAt: row.blePresenceChallengeExpiresAt?.toISOString(),
+      challengeUsedAt: row.blePresenceChallengeUsedAt?.toISOString(),
+      confirmedAt: row.blePresenceConfirmedAt?.toISOString(),
+      confirmedByPubkey: row.blePresenceConfirmedByPubkey,
     },
   };
 }
@@ -199,8 +234,15 @@ export async function saveSession(data: NewSession) {
         tripId: data.tripId,
         driverPubkey: data.driverPubkey,
         riderPubkey: data.riderPubkey ?? null,
+        joinToken: data.joinToken ?? null,
+        joinTokenExpiresAt: data.joinTokenExpiresAt ?? null,
         partyASignature: data.partyASignature ?? null,
         partyBSignature: data.partyBSignature ?? null,
+        blePresenceChallenge: data.blePresenceChallenge ?? null,
+        blePresenceChallengeExpiresAt: data.blePresenceChallengeExpiresAt ?? null,
+        blePresenceChallengeUsedAt: data.blePresenceChallengeUsedAt ?? null,
+        blePresenceConfirmedAt: data.blePresenceConfirmedAt ?? null,
+        blePresenceConfirmedByPubkey: data.blePresenceConfirmedByPubkey ?? null,
         createdAt: data.createdAt,
         expiresAt: data.expiresAt,
         completedAt: data.completedAt ?? null,
@@ -218,6 +260,23 @@ export async function getSession(sessionId: string) {
     .where(
       and(
         eq(sessions.sessionId, sessionId),
+        gt(sessions.expiresAt, new Date()),
+        isNull(sessions.completedAt),
+      ),
+    )
+    .limit(1);
+
+  return session ? mapSession(session) : null;
+}
+
+export async function getSessionByJoinToken(joinToken: string) {
+  const [session] = await db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.joinToken, joinToken),
+        gt(sessions.joinTokenExpiresAt, new Date()),
         gt(sessions.expiresAt, new Date()),
         isNull(sessions.completedAt),
       ),
@@ -252,6 +311,16 @@ export async function saveSessionSignature(
         ? { partyASignature: signature }
         : { partyBSignature: signature },
     )
+    .where(eq(sessions.sessionId, sessionId))
+    .returning();
+
+  return session ? mapSession(session) : null;
+}
+
+export async function updateSession(sessionId: string, data: Partial<NewSession>) {
+  const [session] = await db
+    .update(sessions)
+    .set(normalizeSessionPatch(data))
     .where(eq(sessions.sessionId, sessionId))
     .returning();
 

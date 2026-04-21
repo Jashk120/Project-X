@@ -18,7 +18,7 @@ export async function createHandler(
   try {
     assertPlatformApiKey(req);
     const { tripId, driverPubkey } = req.body as {
-      tripId: string;
+      tripId?: string;
       driverPubkey: string;
     };
 
@@ -41,6 +41,23 @@ export async function joinHandler(
     };
 
     const result = await service.joinSessionAsRider(sessionId, riderPubkey);
+    return reply.code(200).send(result);
+  } catch (err: any) {
+    return reply.code(400).send({ error: err.message });
+  }
+}
+
+export async function joinByTokenHandler(
+  req: FastifyRequest,
+  reply: FastifyReply,
+) {
+  try {
+    const { joinToken, riderPubkey } = req.body as {
+      joinToken: string;
+      riderPubkey: string;
+    };
+
+    const result = await service.joinSessionByToken(joinToken, riderPubkey);
     return reply.code(200).send(result);
   } catch (err: any) {
     return reply.code(400).send({ error: err.message });
@@ -72,5 +89,57 @@ export async function closeHandler(
   } catch (err: any) {
     const code = err.message === "invalid platform api key" ? 401 : 400;
     return reply.code(code).send({ error: err.message });
+  }
+}
+
+export async function issuePresenceHandler(
+  req: FastifyRequest,
+  reply: FastifyReply,
+) {
+  try {
+    const { sessionId, requesterPubkey } = req.body as {
+      sessionId: string;
+      requesterPubkey: string;
+    };
+    const result = await service.issuePresenceChallenge(sessionId, requesterPubkey);
+    return reply.code(200).send(result);
+  } catch (err: any) {
+    return reply.code(400).send({ error: err.message });
+  }
+}
+
+export async function confirmPresenceHandler(
+  req: FastifyRequest,
+  reply: FastifyReply,
+) {
+  try {
+    const { sessionId, responderPubkey, challenge, signature } = req.body as {
+      sessionId: string;
+      responderPubkey: string;
+      challenge: string;
+      signature: string;
+    };
+    const result = await service.confirmPresenceChallenge({
+      sessionId,
+      responderPubkey,
+      challenge,
+      signature,
+    });
+    return reply.code(200).send(result);
+  } catch (err: any) {
+    return reply.code(400).send({ error: err.message });
+  }
+}
+
+export async function getPresenceHandler(
+  req: FastifyRequest,
+  reply: FastifyReply,
+) {
+  try {
+    const { sessionId } = req.params as { sessionId: string };
+    const result = await service.getPresenceState(sessionId);
+    return reply.code(200).send(result);
+  } catch (err: any) {
+    return reply.code(400).send({ error: err.message });
   }
 }

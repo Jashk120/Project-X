@@ -15,7 +15,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         },
         body: {
           type: "object",
-          required: ["tripId", "driverPubkey"],
+          required: ["driverPubkey"],
           properties: {
             tripId: { type: "string" },
             driverPubkey: { type: "string" },
@@ -41,6 +41,23 @@ export async function sessionRoutes(app: FastifyInstance) {
       },
     },
     controller.joinHandler,
+  );
+
+  app.post(
+    "/session/join-by-token",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["joinToken", "riderPubkey"],
+          properties: {
+            joinToken: { type: "string" },
+            riderPubkey: { type: "string" },
+          },
+        },
+      },
+    },
+    controller.joinByTokenHandler,
   );
 
   app.get(
@@ -80,5 +97,57 @@ export async function sessionRoutes(app: FastifyInstance) {
       },
     },
     controller.closeHandler,
+  );
+
+  app.post(
+    "/session/presence/issue",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["sessionId", "requesterPubkey"],
+          properties: {
+            sessionId: { type: "string" },
+            requesterPubkey: { type: "string" },
+          },
+        },
+      },
+    },
+    controller.issuePresenceHandler,
+  );
+
+  app.post(
+    "/session/presence/confirm",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["sessionId", "responderPubkey", "challenge", "signature"],
+          properties: {
+            sessionId: { type: "string" },
+            responderPubkey: { type: "string" },
+            challenge: { type: "string" },
+            signature: { type: "string" },
+          },
+        },
+      },
+    },
+    controller.confirmPresenceHandler,
+  );
+
+  app.get(
+    "/session/:sessionId/presence",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["sessionId"],
+          properties: {
+            sessionId: { type: "string" },
+          },
+        },
+      },
+    },
+    controller.getPresenceHandler,
   );
 }

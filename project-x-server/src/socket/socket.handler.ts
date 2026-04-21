@@ -24,6 +24,12 @@ interface ThumbPayload {
   timestamp: string
 }
 
+interface PresenceBroadcastPayload {
+  sessionId: string
+  pubkey: string
+  expiresAt: string
+}
+
 type RoomState = {
   sessionId: string
   partyA: string
@@ -157,6 +163,23 @@ export function registerSocketHandlers(io: Server) {
         return
       }
 
+      const persistedSession = await getSession(sessionId)
+      if (!persistedSession) {
+        socket.emit('session:error', { error: 'session not found or expired' })
+        return
+      }
+
+      if (
+        !persistedSession.presence.confirmedAt ||
+        persistedSession.presence.confirmedByPubkey !== state.partyB
+      ) {
+        emitVerifyResult(io, sessionId, state.partyA, {
+          verified: false,
+          reason: 'BLE presence confirmation is required before verification',
+        })
+        return
+      }
+
       if (state.verificationInFlight) {
         return
       }
@@ -232,6 +255,30 @@ export function registerSocketHandlers(io: Server) {
           roomState.set(sessionId, state)
         }
       }
+    })
+
+    socket.on('presence:broadcasting', async ({
+      sessionId,
+      pubkey,
+      expiresAt,
+    }: PresenceBroadcastPayload) => {
+      const state = roomState.get(sessionId)
+      if (!state) {
+        socket.emit('session:error', { error: 'session room not found' })
+        return
+      }
+
+      if (socket.data.role !== 'partyA' || pubkey !== state.partyA) {
+        socket.emit('session:error', { error: 'only the driver can broadcast BLE presence state' })
+        return
+      }
+
+      io.to(sessionId).emit('presence:broadcasting', {
+        sessionId,
+        driverPubkey: pubkey,
+        expiresAt,
+        timestamp: Date.now(),
+      })
     })
 
     socket.on('verify:signed', async ({

@@ -47,11 +47,11 @@ export type ProjectXProgram = {
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "partyA"
               },
               {
                 "kind": "account",
-                "path": "rider"
+                "path": "partyB"
               },
               {
                 "kind": "arg",
@@ -61,10 +61,10 @@ export type ProjectXProgram = {
           }
         },
         {
-          "name": "owner"
+          "name": "partyA"
         },
         {
-          "name": "rider"
+          "name": "partyB"
         },
         {
           "name": "platform",
@@ -187,7 +187,8 @@ export type ProjectXProgram = {
           }
         },
         {
-          "name": "owner"
+          "name": "owner",
+          "signer": true
         },
         {
           "name": "platform",
@@ -295,11 +296,11 @@ export type ProjectXProgram = {
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "partyA"
               },
               {
                 "kind": "account",
-                "path": "rider"
+                "path": "partyB"
               },
               {
                 "kind": "arg",
@@ -329,16 +330,18 @@ export type ProjectXProgram = {
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "partyA"
               }
             ]
           }
         },
         {
-          "name": "owner"
+          "name": "partyA",
+          "signer": true
         },
         {
-          "name": "rider"
+          "name": "partyB",
+          "signer": true
         },
         {
           "name": "verifier",
