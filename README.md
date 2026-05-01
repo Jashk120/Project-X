@@ -1,159 +1,121 @@
-# Project X — Physical World Identity Infrastructure
+# Project X
 
-> **OAuth for the physical world, powered by Solana**
+Project X is a Solana-backed identity verification demo composed of:
 
-*Colosseum Frontier Hackathon 2026*
+- `project-x` (Next.js demo client)
+- `project-x-server` (Fastify + Socket.IO backend)
+- `project-x-program` (Anchor program)
+- `ProjectXSDK` (separate SDK workspace in this repo)
 
----
+The product boundary is primarily `project-x-server` + `project-x-program`. The frontend is a demo/integration client.
 
-## The Problem
+## Current System Flow
 
-Every day millions of people get into cars with strangers. The current verification system is broken:
+1. Browser creates/reuses a local keypair at `localStorage['project_x_keypair']`.
+2. WebAuthn registration runs through backend (`/webauthn/register/*`).
+3. Backend stores WebAuthn credential and returns credential hash.
+4. Frontend calls `/enroll/prepare`, signs with local keypair, then `/enroll/submit`.
+5. Driver creates/reuses a session (`/session/create`).
+6. Rider joins session (`/session/join`).
+7. Driver and rider both complete WebAuthn authentication and share GPS.
+8. Backend requires BLE presence confirmation for rider in the session.
+9. Backend validates both signatures + proximity, prepares one canonical verify tx, both parties sign, backend countersigns and submits on-chain verify.
 
-- OTP proves phone possession, not identity
-- A driver can send his brother with his phone — undetectable
-- Verification is locked to one platform, no portability
-- Platform breaches expose millions of identities
-- No real-time physical presence check
+## Workspace Layout
 
-## The Solution
-
-Project X is an identity infrastructure layer. Not an app. Not a platform. An on-chain credential system that any physical-world platform can integrate to gate high-trust interactions behind verified identity.
-
-**Enroll once. Verify everywhere. No company owns your identity.**
-
-```
-Enroll  → biometric captured, ZK proof generated, credential written to Solana
-Verify  → credential checked + proximity gated (must be within 50m)
-Revoke  → platform deactivates credential across all integrated platforms
-```
-
----
-
-## Monorepo Structure
-
-```
-project-x/
-├── project-x-program/     # Anchor smart contract (Rust)
-│   └── programs/
-│       └── project-x-program/
-│           └── src/
-│               ├── lib.rs          # Program entry + instructions
-│               ├── state/          # Credential account struct
-│               └── error.rs        # Custom error codes
-└── project-x/             # Next.js frontend
-    └── app/
-        ├── page.tsx        # Main UI (enroll / verify / revoke)
-        ├── providers.tsx   # Solana wallet provider
-        └── idl/            # Anchor IDL (auto-generated)
+```text
+/home/curator/solana
+├── project-x                 # Next.js demo UI/client
+├── project-x-server          # Fastify API + Socket.IO + DB + Anchor client
+├── project-x-program         # Anchor on-chain program
+└── ProjectXSDK               # SDK workspace
 ```
 
----
+## Backend API (selected)
 
-## Smart Contract
+Base prefix: `/api/v1`
 
-**Program ID:** `8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy`  
-**Network:** Solana Devnet  
-**Framework:** Anchor 1.0.0
+- Solana routes:
+  - `POST /enroll`
+  - `POST /enroll/prepare`
+  - `POST /enroll/submit`
+  - `POST /verify`
+  - `POST /revoke`
+  - `GET /status`
+  - `POST /close`
+- Session routes:
+  - `POST /session/create`
+  - `POST /session/join`
+  - `POST /session/join-by-token`
+  - `GET /session/:sessionId`
+  - `POST /session/close`
+  - `POST /session/presence/issue`
+  - `POST /session/presence/confirm`
+  - `GET /session/:sessionId/presence`
+- WebAuthn routes:
+  - register begin/complete
+  - verify begin/complete
 
-### Instructions
+Socket.IO path: `/socket.io`
 
-| Instruction | Who pays | What it does |
-|-------------|----------|--------------|
-| `enroll` | Platform | Creates credential PDA for a user, stores biometric hash |
-| `verify` | Verifier | Checks credential is active + proximity flag |
-| `revoke` | Platform | Sets `is_active = false`, blocks all future verifies |
+## Program
 
-### Credential Account (PDA)
+- Program ID: `8uGQrehARt9knb4Fs7j15tTVifLwvM56Lre53kYNurTy`
+- Network: Solana devnet (default)
+- Main instructions:
+  - `enroll`
+  - `attest_proximity`
+  - `verify`
+  - `revoke`
+  - `close`
 
-```rust
-seeds = ["credential", owner_pubkey]
+## Run Locally
 
-pub struct Credential {
-    pub owner: Pubkey,             // user's wallet
-    pub platform: Pubkey,          // platform that enrolled them
-    pub credential_hash: [u8; 32], // SHA-256 of biometric proof
-    pub enrolled_at: i64,          // unix timestamp
-    pub is_active: bool,
-    pub bump: u8,
-}
-```
-
-### Why Solana is load-bearing
-
-- **Portability** — one credential works across Uber, Rapido, Ola. No single company owns it.
-- **Audit trail** — every verify call is an immutable on-chain transaction
-- **Neutral substrate** — open standard, anyone can read credentials for free
-- **Cost** — 500k driver enrollments ≈ $125 total. Reads are free.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-```bash
-# Required
-rustc >= 1.94
-solana-cli >= 3.1
-anchor-cli >= 1.0.0
-node >= 20
-```
-
-### Smart Contract
+### 1) Program
 
 ```bash
 cd project-x-program
-
-# Build
 anchor build
-
-# Run tests
 anchor test
-
-# Deploy to devnet
-anchor deploy --provider.cluster devnet
 ```
 
-### Frontend
+### 2) Server
 
 ```bash
-cd project-x
-
-# Install dependencies
+cd project-x-server
 npm install
-
-# Run dev server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), connect Phantom wallet (set to Devnet), and use the Enroll / Verify / Revoke buttons.
+Required env (server):
 
----
+- `DATABASE_URL`
+- `PLATFORM_KEYPAIR`
+- `PLATFORM_API_KEY`
+- Optional: `SOLANA_RPC` (defaults to devnet)
 
-## Roadmap
+### 3) Frontend
 
-| Week | Milestone |
-|------|-----------|
-| 1 | ✅ Anchor program deployed, enroll/verify/revoke working |
-| 2 | ✅ Next.js frontend, Phantom wallet, full flow on devnet |
-| 3 | WebAuthn biometric integration, real fingerprint hash |
-| 4 | QR code scan flow, two-platform portability demo |
-| 5 | Mobile testing, UI polish, end-to-end demo |
+```bash
+cd project-x
+npm install
+npm run dev
+```
 
----
+Frontend env in use:
 
-## Tech Stack
+- `NEXT_PUBLIC_PROJECT_X_API_URL`
+- `NEXT_PUBLIC_PLATFORM_API_KEY`
 
-| Layer | Tech |
-|-------|------|
-| Smart contract | Anchor (Rust), Solana |
-| Frontend | Next.js 15, TypeScript, Tailwind |
-| Wallet | Phantom, `@solana/wallet-adapter` |
-| Biometric (upcoming) | WebAuthn (device secure enclave) |
-| Proximity (upcoming) | Browser Geolocation API |
+## Current Caveats
 
----
+- Frontend uses one browser-local identity (`project_x_keypair`) across driver/rider/register flows.
+- Same browser profile for driver+rider will fail rider join (`rider pubkey cannot be the same as driver`).
+- Prepared enroll/verify transactions are kept in-memory on backend; restart drops outstanding prepare records.
+- Verify prepare expiry requires both parties to sign again.
+- Room presence is in-memory in Socket.IO state.
+- `/api/users` in Next app still exists for demo bookkeeping; it is not authoritative.
+- Socket verify path now requires BLE presence confirmation; current driver/rider pages are not fully wired to presence issue/confirm endpoints.
 
 ## License
 

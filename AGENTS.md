@@ -1,12 +1,13 @@
 # Workspace Context
 
-This workspace contains three related projects:
+This workspace contains four related projects:
 
 - `/home/curator/solana/project-x`
 - `/home/curator/solana/project-x-server`
 - `/home/curator/solana/project-x-program`
+- `/home/curator/solana/ProjectXSDK`
 
-Together they implement Project X, a Solana-backed identity verification demo.
+`project-x`, `project-x-server`, and `project-x-program` implement Project X, a Solana-backed identity verification demo. `ProjectXSDK` is a separate SDK workspace in the same repo root.
 
 ## System Summary
 
@@ -22,7 +23,7 @@ Product boundary:
 - The Next.js app is a demo client and integrator-style reference UI.
 - The system is closer to identity infrastructure than to a marketplace app.
 
-Current end-to-end demo flow:
+Current backend-mediated flow:
 
 1. A browser-local keypair is generated or reused from `localStorage['project_x_keypair']`.
 2. WebAuthn registration completes through the backend.
@@ -32,11 +33,12 @@ Current end-to-end demo flow:
 6. Rider joins that session.
 7. Driver completes WebAuthn authentication and shares location.
 8. Rider auto-starts WebAuthn authentication when `partyA` begins verification and then shares location.
-9. Backend checks both WebAuthn signatures, validates GPS proximity, writes a proximity attestation on Solana if needed, prepares one canonical `verify` transaction, sends the same serialized message to both parties, collects both signatures, verifies that the submitted message bytes exactly match the prepared message bytes, adds the verifier signature, and then submits on-chain verify.
+9. Backend requires a BLE presence challenge confirmation tied to `partyB` before allowing verification.
+10. Backend checks both WebAuthn signatures, validates GPS proximity, writes a proximity attestation on Solana if needed, prepares one canonical `verify` transaction, sends the same serialized message to both parties, collects both signatures, verifies that the submitted message bytes exactly match the prepared message bytes, adds the verifier signature, and then submits on-chain verify.
 
 ## Current Working State
 
-What is confirmed working now:
+What is implemented now:
 
 - WebAuthn registration succeeds and enrollment now uses client-side signing through `enroll/prepare` and `enroll/submit`.
 - Driver and rider can use the same selected session id from the frontend preset list:
@@ -46,12 +48,11 @@ What is confirmed working now:
 - Sessions are stored in PostgreSQL through Drizzle, not the old file store.
 - WebAuthn credentials and challenges are stored in PostgreSQL.
 - Proximity attestations are stored in PostgreSQL and consumed by backend/on-chain verification.
+- Session records include join-token fields and BLE-presence challenge/confirmation fields.
+- Session routes include join-by-token and BLE presence issue/confirm/read endpoints.
 - The backend socket room refresh now pulls `partyA` and `partyB` pubkeys from the latest session record on join, so stale in-memory `partyB` state no longer causes false mismatch errors.
 - Verify now uses a canonical shared transaction message for both parties instead of backend-only submission.
 - Backend countersigning now checks submitted `serializeMessage()` bytes against the prepared canonical message bytes before merging signatures.
-- Anchor program tests currently pass.
-- Backend TypeScript typecheck currently passes.
-- Frontend TypeScript compile currently passes.
 
 Important current caveats:
 
@@ -60,7 +61,7 @@ Important current caveats:
 - The Next-side `/api/users` store still exists, but the current driver/rider flow no longer depends on it for active session setup.
 - Prepared enroll/verify transactions are currently stored in memory on the backend for the demo. A backend restart drops outstanding prepare records.
 - Verify prepare expiry currently fails the verification attempt and requires both parties to sign again. There is no resume flow yet.
-- Frontend lint is currently failing because of a React hooks rule violation in `app/providers.tsx`.
+- Socket verification now enforces BLE presence confirmation before `verify:prepare`, but the current `driver`/`rider` frontend pages do not call `/session/presence/issue` and `/session/presence/confirm`.
 
 ## Project Map
 
@@ -87,7 +88,7 @@ Important files:
 
 - Wraps the app with Solana wallet providers.
 - Still uses a mount gate implemented via `setState` inside `useEffect`.
-- This currently triggers the frontend lint failure.
+- Rider page uses `useEffectEvent`; React hooks lint and build assumptions should be re-checked whenever Next/React versions change.
 
 `/home/curator/solana/project-x/app/page.tsx`
 
@@ -297,8 +298,12 @@ Important files:
 - Declares:
   - `POST /session/create`
   - `POST /session/join`
+  - `POST /session/join-by-token`
   - `GET /session/:sessionId`
   - `POST /session/close`
+  - `POST /session/presence/issue`
+  - `POST /session/presence/confirm`
+  - `GET /session/:sessionId/presence`
 
 `/home/curator/solana/project-x-server/src/modules/session/session.service.ts`
 
@@ -307,8 +312,11 @@ Important files:
 - Stores:
   - `driverPubkey`
   - `riderPubkey`
+  - `joinToken`
+  - `joinTokenExpiresAt`
   - `signatures.partyA`
   - `signatures.partyB`
+  - BLE presence challenge/confirmation fields
 
 `/home/curator/solana/project-x-server/src/modules/proximity/proximity.service.ts`
 
@@ -326,6 +334,7 @@ Important files:
 - Handles:
   - `join`
   - `driver:thumb`
+  - `presence:broadcasting`
   - `verify:signed`
 - Validates the joining pubkey against the persisted session record.
 - Maintains in-memory room state.
@@ -333,6 +342,7 @@ Important files:
 - Emits:
   - `party:connected`
   - `driver:verifying`
+  - `presence:broadcasting`
   - `verify:prepare`
   - `verify:result`
   - `session:error`
@@ -434,6 +444,7 @@ These issues are still present:
   - server restarts drop room presence
 - Proximity REST handlers exist in the backend codebase but are not mounted in `buildApp`
 - `/api/users` persists local demo selections but is not authoritative system state
+- Verification additionally depends on BLE presence confirmation state in the session record.
 
 ## Practical Debugging Notes
 
@@ -458,6 +469,8 @@ Specific current pitfalls:
   - `verification request expired; both parties must sign again`
 - Driver and rider using the same browser profile still share `project_x_keypair`.
 - The generic `/party` page is not fully aligned with the current session/WebAuthn flow and can fail in ways the dedicated driver/rider pages do not.
+- If BLE presence was not confirmed for the rider, verification can fail with:
+  - `BLE presence confirmation is required before verification`
 
 ## Recommended Reading Order
 
