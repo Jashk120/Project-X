@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Modal,
   Platform,
   Pressable,
@@ -27,6 +28,8 @@ import {
   type VerificationStatusUpdate,
 } from './src/projectx';
 
+type Screen = 'home' | 'identity' | 'driver' | 'rider' | 'runtime';
+
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
 
@@ -47,7 +50,8 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
   const [platformApiKey, setPlatformApiKey] = useState(
     PROJECT_X_SDK_CONFIG.platformApiKey,
   );
-  const [sessionId, setSessionId] = useState('active-trip');
+  const [screen, setScreen] = useState<Screen>('home');
+  const [sessionId, setSessionId] = useState('');
   const [identity, setIdentity] = useState<string>('');
   const [status, setStatus] = useState<VerificationStatusUpdate>({
     state: 'idle',
@@ -60,6 +64,9 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
   const [manualJoinPayload, setManualJoinPayload] = useState('');
   const [error, setError] = useState<string>('');
   const [credentialStatus, setCredentialStatus] = useState<string>('');
+  const [enrollBusy, setEnrollBusy] = useState(false);
+  const [driverBusy, setDriverBusy] = useState(false);
+  const [riderBusy, setRiderBusy] = useState(false);
   const passkeyProviderRef = useRef(new ReactNativePasskeyProvider());
 
   const backgroundColor = isDarkMode ? '#08111f' : '#f3efe6';
@@ -77,6 +84,14 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
       teardownSdk();
     };
   }, []);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    Alert.alert('Project X Error', error);
+  }, [error]);
 
   function teardownSdk() {
     for (const unsubscribe of unsubscribeRef.current) {
@@ -147,6 +162,7 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
 
   async function enrollIdentity() {
     try {
+      setEnrollBusy(true);
       const sdk = sdkRef.current ?? attachSdk();
       const nextIdentity = await sdk.getOrCreateIdentity();
       setIdentity(nextIdentity.pubkey);
@@ -155,11 +171,14 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
       setError('');
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to enroll identity');
+    } finally {
+      setEnrollBusy(false);
     }
   }
 
   async function prepareDriver() {
     try {
+      setDriverBusy(true);
       const sdk = attachSdk();
       const nextIdentity = await sdk.getOrCreateIdentity();
       setIdentity(nextIdentity.pubkey);
@@ -171,11 +190,14 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
       setResult(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to prepare driver session');
+    } finally {
+      setDriverBusy(false);
     }
   }
 
   async function prepareRider() {
     try {
+      setRiderBusy(true);
       const sdk = attachSdk();
       const nextIdentity = await sdk.getOrCreateIdentity();
       setIdentity(nextIdentity.pubkey);
@@ -186,6 +208,8 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
       setResult(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to prepare rider session');
+    } finally {
+      setRiderBusy(false);
     }
   }
 
@@ -206,6 +230,7 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
     setError('');
     setResult(null);
     setScannerOpen(false);
+    setScreen('rider');
   }
 
   async function startDriverVerification() {
@@ -225,6 +250,8 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
     teardownSdk();
     setStatus({ state: 'idle' });
     setJoinQrPayload(null);
+    setSession(null);
+    setResult(null);
   }
 
   async function openScanner() {
@@ -293,18 +320,51 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
     startDriverVerification().catch(() => {});
   }
 
-  return (
-    <SafeAreaView style={[styles.root, { backgroundColor }]}>
-      <ScrollView contentContainerStyle={styles.content}>
+  function renderHomeScreen() {
+    return (
+      <>
         <Text style={[styles.eyebrow, { color: accentColor }]}>Project X Mobile SDK</Text>
         <Text style={[styles.title, { color: textColor }]}>
-          Session orchestration moved out of the demo app
+          Mobile flow, split into real screens
         </Text>
         <Text style={[styles.lead, { color: mutedColor }]}>
-          This screen is only a thin shell over the SDK. Identity storage, REST
-          calls, socket joins, verify transaction signing, and BLE presence gating
-          now live in reusable client code.
+          This build now uses screen-level navigation inside the app shell instead of one
+          long control panel. Identity, driver, rider, and runtime views are separated.
         </Text>
+
+        <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Quick Actions</Text>
+          <View style={styles.buttonRow}>
+            <PrimaryButton title="Identity" onPress={() => setScreen('identity')} />
+            <PrimaryButton title="Driver" onPress={() => setScreen('driver')} />
+            <PrimaryButton title="Rider" onPress={() => setScreen('rider')} />
+            <SecondaryButton title="Runtime" onPress={() => setScreen('runtime')} />
+          </View>
+          <Row
+            label="Identity"
+            value={identity || 'not loaded'}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Row
+            label="Credential"
+            value={credentialStatus || 'unknown'}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Row
+            label="Session"
+            value={sessionId || 'auto-generate on driver start'}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Row
+            label="SDK state"
+            value={status.state}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+        </View>
 
         <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>Connection</Text>
@@ -333,7 +393,7 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
             borderColor={borderColor}
           />
           <LabeledInput
-            label="Session ID"
+            label="Session ID Override"
             value={sessionId}
             onChangeText={setSessionId}
             textColor={textColor}
@@ -341,50 +401,103 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
             borderColor={borderColor}
           />
         </View>
+      </>
+    );
+  }
 
-        <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>Identity</Text>
-          <Text style={[styles.value, { color: textColor }]}>
-            {identity || 'No local identity loaded yet'}
+  function renderIdentityScreen() {
+    return (
+      <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
+        <Text style={[styles.sectionTitle, { color: textColor }]}>Identity</Text>
+        <Text style={[styles.value, { color: textColor }]}>
+          {identity || 'No local identity loaded yet'}
+        </Text>
+        {credentialStatus ? (
+          <Text style={[styles.caption, { color: mutedColor }]}>
+            Credential status: {credentialStatus}
           </Text>
-          {credentialStatus ? (
-            <Text style={[styles.caption, { color: mutedColor }]}>
-              Credential status: {credentialStatus}
-            </Text>
-          ) : null}
+        ) : null}
 
-          <View style={styles.buttonRow}>
-            <PrimaryButton title="Create / Load Identity" onPress={handleEnsureIdentity} />
-            <SecondaryButton title="Check Status" onPress={handleRefreshStatus} />
-            <SecondaryButton title="Enroll Native" onPress={handleEnrollIdentity} />
-          </View>
+        <View style={styles.buttonRow}>
+          <PrimaryButton title="Create / Load Identity" onPress={handleEnsureIdentity} />
+          <SecondaryButton title="Check Status" onPress={handleRefreshStatus} />
+          <SecondaryButton
+            title={enrollBusy ? 'Enrolling...' : 'Enroll Native'}
+            onPress={handleEnrollIdentity}
+          />
         </View>
+        {status.state !== 'idle' ? (
+          <Text style={[styles.caption, { color: mutedColor }]}>
+            Enrollment state: {status.state}
+            {status.detail ? ` - ${status.detail}` : ''}
+          </Text>
+        ) : null}
+        {error ? (
+          <Text style={[styles.errorText, { color: '#b42318' }]}>{error}</Text>
+        ) : null}
+      </View>
+    );
+  }
 
+  function renderDriverScreen() {
+    const riderJoined = Boolean(session?.riderPubkey);
+    const driverReady =
+      Boolean(joinQrPayload) &&
+      (status.state === 'waiting_for_peer' ||
+        status.state === 'peer_connected' ||
+        status.state === 'authenticating' ||
+        status.state === 'sharing_location' ||
+        status.state === 'waiting_for_prepare' ||
+        status.state === 'signing_verify' ||
+        status.state === 'verified');
+    const canStartVerify = riderJoined && status.state === 'peer_connected';
+
+    return (
+      <>
         <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>Verification Flow</Text>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Driver Flow</Text>
           <Text style={[styles.caption, { color: mutedColor }]}>
-            Driver: create or reuse the backend session, then connect socket as
-            `partyA`.
-          </Text>
-          <Text style={[styles.caption, { color: mutedColor }]}>
-            Rider: join the same session, then connect socket as `partyB`.
+            Start here. This creates a fresh driver session, connects as `partyA`, and
+            shows the join QR for the rider.
           </Text>
 
           <View style={styles.buttonRow}>
-            <PrimaryButton title="Prepare as Driver" onPress={handlePrepareDriver} />
-            <PrimaryButton title="Prepare as Rider" onPress={handlePrepareRider} />
-          </View>
-          <View style={styles.buttonRow}>
-            <SecondaryButton
-              title={Platform.OS === 'android' ? 'Open Rider Join' : 'Scan Rider QR'}
-              onPress={handleOpenScanner}
+            <PrimaryButton
+              title={driverBusy ? 'Starting Driver...' : driverReady ? 'Reset Driver Session' : 'Start Driver Session'}
+              onPress={handlePrepareDriver}
             />
             <SecondaryButton
-              title="Start Driver Verify"
+              title="Verify"
               onPress={handleStartDriverVerification}
+              disabled={!canStartVerify}
             />
             <SecondaryButton title="Disconnect" onPress={disconnectSession} />
           </View>
+          <Row
+            label="Session"
+            value={session?.sessionId ?? sessionId ?? 'not created'}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Row
+            label="Driver status"
+            value={
+              !driverReady
+                ? 'create session first'
+                : riderJoined
+                  ? 'rider joined'
+                  : 'waiting for rider'
+            }
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Text style={[styles.caption, { color: mutedColor }]}>
+            {canStartVerify
+              ? 'Rider is connected. You can start biometric verification now.'
+              : driverReady
+                ? 'Share the QR below. Verify unlocks after the rider joins.'
+                : 'Tap Start Driver Session to create a backend session and show the QR.'}
+          </Text>
         </View>
 
         {joinQrPayload ? (
@@ -424,8 +537,72 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
               {JSON.stringify(joinQrPayload)}
             </Text>
           </View>
-        ) : null}
+        ) : (
+          <View style={[styles.notice, { borderColor, backgroundColor: cardColor }]}>
+            <Text style={[styles.noticeTitle, { color: textColor }]}>No Join QR Yet</Text>
+            <Text style={[styles.caption, { color: mutedColor }]}>
+              Prepare a driver session first. The join QR appears here after the backend
+              issues a join token.
+            </Text>
+          </View>
+        )}
+      </>
+    );
+  }
 
+  function renderRiderScreen() {
+    return (
+      <>
+        <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Rider Flow</Text>
+          <Text style={[styles.caption, { color: mutedColor }]}>
+            Join as `partyB` from the driver’s QR payload. Direct session-id join is only
+            here as a fallback for testing.
+          </Text>
+          <View style={styles.buttonRow}>
+            <PrimaryButton
+              title={Platform.OS === 'android' ? 'Open Join From QR' : 'Scan Driver QR'}
+              onPress={handleOpenScanner}
+            />
+            <SecondaryButton
+              title={riderBusy ? 'Joining...' : 'Join By Session ID'}
+              onPress={handlePrepareRider}
+            />
+            <SecondaryButton title="Disconnect" onPress={disconnectSession} />
+          </View>
+          <Text style={[styles.caption, { color: mutedColor }]}>
+            Preferred flow: open the QR join sheet and paste or scan the driver payload.
+          </Text>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Rider Session</Text>
+          <Row
+            label="Driver pubkey"
+            value={session?.driverPubkey ?? 'none'}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Row
+            label="Rider pubkey"
+            value={session?.riderPubkey ?? 'none'}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+          <Row
+            label="Session ID"
+            value={session?.sessionId ?? sessionId}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
+        </View>
+      </>
+    );
+  }
+
+  function renderRuntimeScreen() {
+    return (
+      <>
         <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>Runtime State</Text>
           <Row label="SDK state" value={status.state} textColor={textColor} mutedColor={mutedColor} />
@@ -460,6 +637,46 @@ function AppContent({ isDarkMode }: { isDarkMode: boolean }) {
             advertising alongside the BLE scan gate.
           </Text>
         </View>
+      </>
+    );
+  }
+
+  function renderScreenContent() {
+    switch (screen) {
+      case 'identity':
+        return renderIdentityScreen();
+      case 'driver':
+        return renderDriverScreen();
+      case 'rider':
+        return renderRiderScreen();
+      case 'runtime':
+        return renderRuntimeScreen();
+      case 'home':
+      default:
+        return renderHomeScreen();
+    }
+  }
+
+  return (
+    <SafeAreaView style={[styles.root, { backgroundColor }]}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.navRow}>
+          <NavChip title="Home" active={screen === 'home'} onPress={() => setScreen('home')} />
+          <NavChip
+            title="Identity"
+            active={screen === 'identity'}
+            onPress={() => setScreen('identity')}
+          />
+          <NavChip title="Driver" active={screen === 'driver'} onPress={() => setScreen('driver')} />
+          <NavChip title="Rider" active={screen === 'rider'} onPress={() => setScreen('rider')} />
+          <NavChip
+            title="Runtime"
+            active={screen === 'runtime'}
+            onPress={() => setScreen('runtime')}
+          />
+        </View>
+
+        {renderScreenContent()}
       </ScrollView>
 
       <Modal visible={scannerOpen} animationType="slide" onRequestClose={() => setScannerOpen(false)}>
@@ -576,12 +793,21 @@ function Row({
 function PrimaryButton({
   title,
   onPress,
+  disabled,
 }: {
   title: string;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.button, styles.primaryButton]}>
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      style={[
+        styles.button,
+        styles.primaryButton,
+        disabled ? styles.buttonDisabled : null,
+      ]}
+    >
       <Text style={styles.primaryButtonText}>{title}</Text>
     </Pressable>
   );
@@ -590,13 +816,46 @@ function PrimaryButton({
 function SecondaryButton({
   title,
   onPress,
+  disabled,
 }: {
   title: string;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.button, styles.secondaryButton]}>
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      style={[
+        styles.button,
+        styles.secondaryButton,
+        disabled ? styles.buttonDisabled : null,
+      ]}
+    >
       <Text style={styles.secondaryButtonText}>{title}</Text>
+    </Pressable>
+  );
+}
+
+function NavChip({
+  title,
+  active,
+  onPress,
+}: {
+  title: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.navChip,
+        active ? styles.navChipActive : styles.navChipInactive,
+      ]}
+    >
+      <Text style={active ? styles.navChipTextActive : styles.navChipTextInactive}>
+        {title}
+      </Text>
     </Pressable>
   );
 }
@@ -608,6 +867,11 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     gap: 16,
+  },
+  navRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   eyebrow: {
     fontSize: 13,
@@ -715,15 +979,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+  errorText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
   buttonRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
   },
+  navChip: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  navChipActive: {
+    backgroundColor: '#0d8a72',
+  },
+  navChipInactive: {
+    backgroundColor: '#dbe6df',
+  },
+  navChipTextActive: {
+    color: '#f7fff7',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  navChipTextInactive: {
+    color: '#173329',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   button: {
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 12,
+  },
+  buttonDisabled: {
+    opacity: 0.45,
   },
   primaryButton: {
     backgroundColor: '#0d8a72',

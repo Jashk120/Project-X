@@ -25,6 +25,7 @@ export async function createHandler(
     const result = await service.createSession({ tripId, driverPubkey });
     return reply.code(200).send(result);
   } catch (err: any) {
+    req.log.error({ err }, "createSession failed");
     const code = err.message === "invalid platform api key" ? 401 : 400;
     return reply.code(code).send({ error: err.message });
   }

@@ -27,6 +27,7 @@ export async function completeRegistration(
     const result = await service.completeRegistration(subjectPubkey, response);
     return reply.code(200).send(result);
   } catch (err: any) {
+    req.log.error({ err }, "completeRegistration failed");
     return reply.code(400).send({ error: err.message });
   }
 }

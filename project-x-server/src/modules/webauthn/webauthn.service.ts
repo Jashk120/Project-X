@@ -22,6 +22,23 @@ function decodeBase64Url(value: string): Buffer {
   return Buffer.from(value, "base64url");
 }
 
+function decodeClientDataJson(value?: string) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(decodeBase64Url(value).toString("utf8")) as {
+      type?: string;
+      challenge?: string;
+      origin?: string;
+      crossOrigin?: boolean;
+    };
+  } catch {
+    return null;
+  }
+}
+
 function decodeBase64UrlToUint8Array(value: string): Uint8Array<ArrayBuffer> {
   const buffer = decodeBase64Url(value);
   const arrayBuffer = new ArrayBuffer(buffer.byteLength);
@@ -116,13 +133,27 @@ export async function completeRegistration(
     throw new Error("challenge already used");
   }
 
-  const verification = await verifyRegistrationResponse({
-    response,
-    expectedChallenge: challengeRecord.challenge,
-    expectedOrigin: expectedOrigins,
-    expectedRPID: env.WEBAUTHN_RP_ID,
-    requireUserVerification: true,
-  });
+  const clientData = decodeClientDataJson(response.response?.clientDataJSON);
+  let verification;
+  try {
+    verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge: challengeRecord.challenge,
+      expectedOrigin: expectedOrigins,
+      expectedRPID: env.WEBAUTHN_RP_ID,
+      requireUserVerification: true,
+    });
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "unknown registration verification error";
+    const observedOrigin = clientData?.origin ?? "unknown";
+    const observedType = clientData?.type ?? "unknown";
+
+    throw new Error(
+      `webauthn registration verification failed: ${errorMessage} ` +
+        `(observed origin: ${observedOrigin}, observed type: ${observedType}, expected rp id: ${env.WEBAUTHN_RP_ID}, expected origins: ${expectedOrigins.join(", ")})`,
+    );
+  }
 
   if (!verification.verified || !verification.registrationInfo) {
     throw new Error("webauthn registration verification failed");

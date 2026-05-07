@@ -72,3 +72,4 @@ project-x-program/Cargo.lock
 # OS
 # -----------------------------
 Thumbs.db
+.gitignore

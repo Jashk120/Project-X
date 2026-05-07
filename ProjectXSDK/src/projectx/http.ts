@@ -56,7 +56,18 @@ export class ProjectXApiClient {
     });
 
     const text = await response.text();
-    const data = text ? (JSON.parse(text) as T & { error?: string }) : ({} as T);
+    let data = {} as T & { error?: string };
+    if (text) {
+      try {
+        data = JSON.parse(text) as T & { error?: string };
+      } catch {
+        const snippet = text.length > 240 ? `${text.slice(0, 240)}...` : text;
+        throw new ProjectXError(
+          'api_invalid_json',
+          `Non-JSON response from ${path}: ${snippet}`,
+        );
+      }
+    }
 
     if (!response.ok) {
       throw new ProjectXError(

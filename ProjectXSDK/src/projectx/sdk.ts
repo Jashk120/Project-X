@@ -115,26 +115,83 @@ export class ProjectXSdk {
   }
 
   async enrollWithPasskey(passkeyProvider: ProjectXPasskeyProvider) {
-    const identity = await this.getOrCreateIdentity();
-    this.emitStatus('creating_session', 'Preparing native passkey enrollment');
+    try {
+      const identity = await this.getOrCreateIdentity();
+      this.emitStatus('creating_session', 'Preparing native passkey enrollment');
 
-    const registrationOptions = await this.api.beginRegistration(identity.pubkey);
-    const registrationResponse = await passkeyProvider.completeRegistration(
-      registrationOptions,
-    );
-    const completedRegistration = await this.api.completeRegistration(
-      identity.pubkey,
-      registrationResponse,
-    );
-    const preparedEnroll = await this.api.prepareEnroll(
-      identity.pubkey,
-      completedRegistration.credentialHash,
-    );
-    const signedTransaction = await this.identity.signSerializedTransaction(
-      preparedEnroll.transaction,
-    );
+      let registrationOptions: Record<string, unknown>;
+      try {
+        registrationOptions = await this.api.beginRegistration(identity.pubkey);
+      } catch (error) {
+        throw new ProjectXError(
+          'registration_begin_failed',
+          toErrorMessage(error, 'Unable to start passkey registration'),
+        );
+      }
 
-    return this.api.submitEnroll(preparedEnroll.prepareId, signedTransaction);
+      let registrationResponse: unknown;
+      try {
+        registrationResponse = await passkeyProvider.completeRegistration(
+          registrationOptions,
+        );
+      } catch (error) {
+        throw new ProjectXError(
+          'registration_native_failed',
+          toErrorMessage(error, 'Native passkey registration failed'),
+        );
+      }
+
+      let completedRegistration: { credentialHash: string };
+      try {
+        completedRegistration = await this.api.completeRegistration(
+          identity.pubkey,
+          registrationResponse,
+        );
+      } catch (error) {
+        throw new ProjectXError(
+          'registration_complete_failed',
+          toErrorMessage(error, 'Server rejected passkey registration'),
+        );
+      }
+
+      let preparedEnroll: { prepareId: string; transaction: string };
+      try {
+        preparedEnroll = await this.api.prepareEnroll(
+          identity.pubkey,
+          completedRegistration.credentialHash,
+        );
+      } catch (error) {
+        throw new ProjectXError(
+          'enroll_prepare_failed',
+          toErrorMessage(error, 'Unable to prepare enrollment transaction'),
+        );
+      }
+
+      let signedTransaction: string;
+      try {
+        signedTransaction = await this.identity.signSerializedTransaction(
+          preparedEnroll.transaction,
+        );
+      } catch (error) {
+        throw new ProjectXError(
+          'enroll_sign_failed',
+          toErrorMessage(error, 'Unable to sign enrollment transaction'),
+        );
+      }
+
+      try {
+        return await this.api.submitEnroll(preparedEnroll.prepareId, signedTransaction);
+      } catch (error) {
+        throw new ProjectXError(
+          'enroll_submit_failed',
+          toErrorMessage(error, 'Unable to submit enrollment transaction'),
+        );
+      }
+    } catch (error) {
+      this.emitStatus('failed', toErrorMessage(error, 'Native enrollment failed'));
+      this.emitError(error, 'Native enrollment failed');
+      throw error;
+    }
   }
 
   async prepareDriverSession(sessionId?: string) {
